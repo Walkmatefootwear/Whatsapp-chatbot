@@ -116,7 +116,7 @@ def delete_product(id):
 # ✅ WhatsApp Webhook
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "your-verify-token")
+    VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "Walkmate2025")
 
     if request.method == 'GET':
         mode = request.args.get("hub.mode")
