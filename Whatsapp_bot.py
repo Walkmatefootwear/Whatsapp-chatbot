@@ -113,7 +113,22 @@ def delete_product(id):
         pass
     return redirect(url_for('admin'))
 
-# Optional: WhatsApp webhook/stub can be added here if needed
+# ✅ WhatsApp Webhook Verification Route
+@app.route('/webhook', methods=['GET', 'POST'])
+def webhook():
+    VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "your-verify-token")  # replace with your actual token
+
+    if request.method == 'GET':
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+
+        if mode == "subscribe" and token == VERIFY_TOKEN:
+            return challenge, 200
+        else:
+            return "Verification token mismatch", 403
+
+    return "Webhook received", 200
 
 if __name__ == '__main__':
     app.run(debug=True)
