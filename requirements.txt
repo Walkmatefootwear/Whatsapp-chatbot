@@ -21,9 +21,9 @@ MarkupSafe==3.0.2
 packaging==25.0
 pillow==11.2.1
 Pygments==2.19.1
-pypiwin32==223
+# pypiwin32==223
 python-dateutil==2.9.0.post0
-pywin32==308
+# pywin32==308
 requests==2.32.3
 s3transfer==0.13.0
 six==1.17.0
