@@ -35,15 +35,18 @@ def init_db():
 init_db()
 
 def compress_image(path):
-    img = Image.open(path)
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    ext = os.path.splitext(path)[1].lower()
-    target_format = 'JPEG' if ext in ['.jpg', '.jpeg'] else 'PNG'
-    q = 85
-    while os.path.getsize(path) > 1_000_000 and q > 10:
-        img.save(path, format=target_format, optimize=True, quality=q)
-        q -= 5
+    try:
+        img = Image.open(path)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        ext = os.path.splitext(path)[1].lower()
+        target_format = 'JPEG' if ext in ['.jpg', '.jpeg'] else 'PNG'
+        q = 85
+        while os.path.getsize(path) > 1_000_000 and q > 10:
+            img.save(path, format=target_format, optimize=True, quality=q)
+            q -= 5
+    except Exception as e:
+        print(f"Compression error: {e}")
 
 @app.route('/')
 def home():
@@ -58,28 +61,32 @@ def admin():
 
 @app.route('/add', methods=['POST'])
 def add_product():
-    m = request.form['main_product'].strip()
-    color = request.form['option'].strip()
-    desc = request.form['description'].strip()
-    mrp = request.form.get('mrp', '').strip()
-    category = request.form.get('category', '').strip()
-    img = request.files['image']
-    if not img:
-        return "No image", 400
+    try:
+        m = request.form['main_product'].strip()
+        color = request.form['option'].strip()
+        desc = request.form['description'].strip()
+        mrp = request.form.get('mrp', '').strip()
+        category = request.form.get('category', '').strip()
+        img = request.files['image']
 
-    fn = secure_filename(img.filename)
-    path = os.path.join(UPLOAD, fn)
-    img.save(path)
-    compress_image(path)
+        if not img:
+            return "No image", 400
 
-    conn = sqlite3.connect('products.db')
-    conn.execute(
-        "INSERT INTO products(main_product, color, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-        (m, color, fn, desc, mrp, category)
-    )
-    conn.commit()
-    conn.close()
-    return redirect(url_for('admin', added=1))
+        fn = secure_filename(img.filename)
+        path = os.path.join(UPLOAD, fn)
+        img.save(path)
+        compress_image(path)
+
+        conn = sqlite3.connect('products.db')
+        conn.execute(
+            "INSERT INTO products(main_product, color, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
+            (m, color, fn, desc, mrp, category)
+        )
+        conn.commit()
+        conn.close()
+        return redirect(url_for('admin', added=1))
+    except Exception as e:
+        return f"Error adding product: {e}", 500
 
 @app.route('/edit/<int:id>', methods=['GET', 'POST'])
 def edit_product(id):
@@ -99,6 +106,7 @@ def edit_product(id):
         conn.commit()
         conn.close()
         return redirect(url_for('admin'))
+
     prod = c.execute("SELECT * FROM products WHERE id = ?", (id,)).fetchone()
     conn.close()
     if not prod:
@@ -109,14 +117,15 @@ def edit_product(id):
 def delete_product(id):
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
-    fn = c.execute("SELECT image FROM products WHERE id=?", (id,)).fetchone()[0]
+    row = c.execute("SELECT image FROM products WHERE id=?", (id,)).fetchone()
+    if row:
+        fn = row[0]
+        img_path = os.path.join(UPLOAD, fn)
+        if os.path.exists(img_path):
+            os.remove(img_path)
     c.execute("DELETE FROM products WHERE id=?", (id,))
     conn.commit()
     conn.close()
-    try:
-        os.remove(os.path.join(UPLOAD, fn))
-    except:
-        pass
     return redirect(url_for('admin'))
 
 @app.route('/webhook', methods=['GET', 'POST'])
@@ -149,13 +158,7 @@ def webhook():
             user_msg = msg['text']['body'].strip().lower()
             state = user_states.get(from_number)
 
-            if user_msg == '1' and state != 'awaiting_option':
-                reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
-                user_states[from_number] = 'awaiting_option'
-                send_text(from_number, reply)
-                return "Back to menu", 200
-
-            if user_msg in ('hi', 'hello', 'menu', 'start'):
+            if user_msg in ('hi', 'hello', 'menu', 'start') or user_msg == '1':
                 reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
                 user_states[from_number] = 'awaiting_option'
                 send_text(from_number, reply)
@@ -171,12 +174,13 @@ def webhook():
                         image_path = os.path.join(UPLOAD, image_name)
                         if not os.path.exists(image_path):
                             send_text(from_number, f"❌ Image file not found:\n{image_path}")
-                            return "Image not found", 200
-                        send_image(from_number, image_path, caption)
+                        else:
+                            send_image(from_number, image_path, caption)
                     else:
                         send_text(from_number, "No catalogue available.")
                     user_states.pop(from_number, None)
                     return "Catalogue sent", 200
+
                 elif user_msg == '2':
                     send_text(from_number, "Please enter the product name (e.g., 2005).")
                     user_states[from_number] = 'awaiting_article'
@@ -187,9 +191,8 @@ def webhook():
 
             if state == 'awaiting_article':
                 if user_msg == '1':
-                    reply = "✅ Back to main menu:\n1. View Catalogue\n2. View Product"
                     user_states[from_number] = 'awaiting_option'
-                    send_text(from_number, reply)
+                    send_text(from_number, "Back to main menu:\n1. View Catalogue\n2. View Product")
                     return "Back to menu", 200
 
                 conn = sqlite3.connect('products.db')
@@ -212,11 +215,11 @@ def webhook():
                 send_text(from_number, "✅ Done. Type another product name to continue or 1 to go back to menu.")
                 return "Product images sent", 200
 
-            send_text(from_number, "I could not understand. Please reply with 'menu' to see options.")
+            send_text(from_number, "I could not understand. Reply 'menu' to restart.")
             return "Unhandled message", 200
 
         except Exception as e:
-            print("Error:", e)
+            print("Webhook error:", e)
             return "Error", 500
 
     return "Webhook received", 200
@@ -276,4 +279,4 @@ def send_image(to, path, caption):
     )
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
