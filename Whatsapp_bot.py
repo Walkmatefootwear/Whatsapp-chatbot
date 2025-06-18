@@ -38,7 +38,6 @@ def compress_image(path):
     img = Image.open(path)
     if img.mode != 'RGB':
         img = img.convert('RGB')
-
     ext = os.path.splitext(path)[1].lower()
     target_format = 'JPEG' if ext in ['.jpg', '.jpeg'] else 'PNG'
     q = 85
@@ -179,33 +178,39 @@ def webhook():
                     user_states.pop(from_number, None)
                     return "Catalogue sent", 200
                 elif user_msg == '2':
-                    send_text(from_number, "Please enter the article number (e.g., 2005).")
+                    send_text(from_number, "Please enter the product name (e.g., 2005).")
                     user_states[from_number] = 'awaiting_article'
-                    return "Asking for article", 200
+                    return "Asking for product name", 200
                 else:
                     send_text(from_number, "I could not understand. Please reply with 1 or 2.")
                     return "Invalid option", 200
 
             if state == 'awaiting_article':
+                if user_msg == '1':
+                    reply = "✅ Back to main menu:\n1. View Catalogue\n2. View Product"
+                    user_states[from_number] = 'awaiting_option'
+                    send_text(from_number, reply)
+                    return "Back to menu", 200
+
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
                 c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
-                row = c.fetchone()
+                rows = c.fetchall()
                 conn.close()
-                if row:
-                    image_name, caption = row
+
+                if not rows:
+                    send_text(from_number, "❌ No matching product found.\nType a correct product name or reply 1 for main menu.")
+                    return "No matches", 200
+
+                for image_name, caption in rows:
                     image_path = os.path.join(UPLOAD, image_name)
-                    if not os.path.exists(image_path):
-                        send_text(from_number, f"❌ Image file not found:\n{image_path}")
-                        user_states.pop(from_number, None)
-                        return "Image not found", 200
-                    send_image(from_number, image_path, caption)
-                    user_states.pop(from_number, None)
-                    return "Product sent", 200
-                else:
-                    send_text(from_number, "❌ Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
-                    user_states[from_number] = 'awaiting_option'
-                    return "Invalid article", 200
+                    if os.path.exists(image_path):
+                        send_image(from_number, image_path, caption)
+                    else:
+                        send_text(from_number, f"❌ Image not found for: {image_name}")
+
+                send_text(from_number, "✅ Done. Type another product name to continue or 1 to go back to menu.")
+                return "Product images sent", 200
 
             send_text(from_number, "I could not understand. Please reply with 'menu' to see options.")
             return "Unhandled message", 200
