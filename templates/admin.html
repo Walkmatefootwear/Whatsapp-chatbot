@@ -23,12 +23,9 @@
             <div class="col-md-3 mb-2">
               <input class="form-control" name="option" placeholder="Color" required>
             </div>
-
-            <!-- New Description field -->
             <div class="col-md-3 mb-2">
               <input class="form-control" name="description" placeholder="Description" required>
             </div>
-
             <div class="col-md-3 mb-2">
               <input class="form-control" name="mrp" placeholder="MRP">
             </div>
@@ -36,7 +33,8 @@
               <input class="form-control" name="category" placeholder="Category">
             </div>
             <div class="col-md-3 mb-2">
-              <input class="form-control" type="file" name="image" accept="image/*,.pdf" required>
+              <input id="imageInput" class="form-control" type="file" name="image" accept="image/*,.pdf" required>
+              <div class="text-danger small" id="fileError" style="display:none;">File must be less than 1 MB</div>
             </div>
           </div>
           <button id="submitBtn" class="btn btn-success w-100 mt-2" type="submit">Add Product</button>
@@ -63,7 +61,6 @@
               </div>
             </div>
             <div class="col-3 text-end pe-3">
-              <a href="{{ url_for('edit_product', id=p[0]) }}" class="btn btn-sm btn-primary mb-1">Edit</a>
               <form action="{{ url_for('delete_product', id=p[0]) }}" method="post" style="display:inline;">
                 <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this?')">Delete</button>
               </form>
@@ -96,6 +93,19 @@
       const submitBtn = document.getElementById('submitBtn');
       const modalEl = document.getElementById('successModal');
       const modal = new bootstrap.Modal(modalEl);
+      const imageInput = document.getElementById('imageInput');
+      const fileError = document.getElementById('fileError');
+
+      imageInput.addEventListener('change', function () {
+        const file = this.files[0];
+        if (file && file.size > 1 * 1024 * 1024) {
+          fileError.style.display = 'block';
+          submitBtn.disabled = true;
+        } else {
+          fileError.style.display = 'none';
+          submitBtn.disabled = false;
+        }
+      });
 
       form.addEventListener('submit', () => {
         submitBtn.disabled = true;
