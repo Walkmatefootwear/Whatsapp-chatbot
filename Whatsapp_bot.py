@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import mimetypes
 import requests
 from flask import Flask, request, render_template, redirect, url_for
 from werkzeug.utils import secure_filename
@@ -11,7 +12,6 @@ os.makedirs(UPLOAD, exist_ok=True)
 
 ACCESS_TOKEN = 'EAARY4nQ44yoBO2ZAs3BZCYRfmZAJabUmHh2OBH8OhuYj1EL8ZBg6y6ZBKEilxz0IpjKforR4KqFTAvNPmDCype0uC6jKUlthGqz2ZBHg9dGb0KfZBScZCydsxlOu1uIcSBEZCMwO5MgkAOb8Rp0UGMNwZCDgISLbZAytCFSoH0bYq9qADm6SLNbKZBW9ahXTjfUZCaVZAKoZBKZCYBZAVieAATZCPuZByxKIhdeTnSDXeCgfy0ZD'
 PHONE_ID = '707899462402999'
-
 user_states = {}
 
 def init_db():
@@ -36,9 +36,14 @@ init_db()
 
 def compress_image(path):
     img = Image.open(path)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    ext = os.path.splitext(path)[1].lower()
+    target_format = 'JPEG' if ext in ['.jpg', '.jpeg'] else 'PNG'
     q = 85
     while os.path.getsize(path) > 1_000_000 and q > 10:
-        img.save(path, optimize=True, quality=q)
+        img.save(path, format=target_format, optimize=True, quality=q)
         q -= 5
 
 @app.route('/')
@@ -191,7 +196,6 @@ def webhook():
                     image_name, caption = row
                     image_path = os.path.join(UPLOAD, image_name)
                     if not os.path.exists(image_path):
-                        print(f"[ERROR] Image not found: {image_path}")
                         send_text(from_number, f"❌ Image file not found:\n{image_path}")
                         user_states.pop(from_number, None)
                         return "Image not found", 200
@@ -202,12 +206,6 @@ def webhook():
                     send_text(from_number, "❌ Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
                     user_states[from_number] = 'awaiting_option'
                     return "Invalid article", 200
-
-            if state == 'awaiting_back_to_menu' and user_msg == '1':
-                reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
-                user_states[from_number] = 'awaiting_option'
-                send_text(from_number, reply)
-                return "Returned to menu", 200
 
             send_text(from_number, "I could not understand. Please reply with 'menu' to see options.")
             return "Unhandled message", 200
@@ -232,35 +230,45 @@ def send_text(to, msg):
     requests.post(url, json=payload, headers=headers)
 
 def send_image(to, path, caption):
-    media_url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/media"
-    with open(path, 'rb') as f:
-        response = requests.post(
-            media_url,
-            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
-            files={"file": f},
-            data={"messaging_product": "whatsapp"}
-        )
-    media_id = response.json().get("id")
-    if not media_id:
-        print("❌ Failed to upload image:", response.text)
-        send_text(to, "❌ Failed to upload image.")
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        send_text(to, f"❌ File not found or empty:\n{path}")
         return
 
-    msg_url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "image",
-        "image": {
-            "id": media_id,
-            "caption": caption
+    mime, _ = mimetypes.guess_type(path)
+    if mime not in ['image/jpeg', 'image/png', 'image/webp']:
+        send_text(to, f"❌ Invalid file type: {mime or 'unknown'}")
+        return
+
+    with open(path, 'rb') as f:
+        response = requests.post(
+            f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
+            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+            files={"file": (os.path.basename(path), f, mime)},
+            data={"messaging_product": "whatsapp"}
+        )
+
+    print("Upload result:", response.text)
+    media_id = response.json().get("id")
+    if not media_id:
+        send_text(to, f"❌ Failed to upload image:\n{response.text}")
+        return
+
+    requests.post(
+        f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "image",
+            "image": {
+                "id": media_id,
+                "caption": caption
+            }
         }
-    }
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    requests.post(msg_url, json=payload, headers=headers)
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)
