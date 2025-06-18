@@ -182,17 +182,30 @@ def webhook():
                     return "Invalid option", 200
 
             if state == 'awaiting_article':
-                conn = sqlite3.connect('products.db')
-                c = conn.cursor()
-                c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
-                row = c.fetchone()
-                conn.close()
-                if row:
-                    image_name, caption = row
-                    image_path = os.path.join(UPLOAD, image_name)
-                    send_image(from_number, image_path, caption)
-                    user_states.pop(from_number, None)
-                    return "Product sent", 200
+    conn = sqlite3.connect('products.db')
+    c = conn.cursor()
+    c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        image_name, caption = row
+        image_path = os.path.join(UPLOAD, image_name)
+
+        # Add this check
+        if not os.path.exists(image_path):
+            print(f"[ERROR] Image not found: {image_path}")
+            send_text(from_number, f"❌ Image file not found:\n{image_path}")
+            user_states.pop(from_number, None)
+            return "Image not found", 200
+
+        send_image(from_number, image_path, caption)
+        user_states.pop(from_number, None)
+        return "Product sent", 200
+    else:
+        send_text(from_number, "Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
+        user_states[from_number] = 'awaiting_option'
+        return "Invalid article", 200
+
                 else:
                     send_text(from_number, "❌ Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
                     user_states[from_number] = 'awaiting_back_to_menu'
