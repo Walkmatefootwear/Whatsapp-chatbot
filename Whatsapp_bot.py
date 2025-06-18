@@ -9,10 +9,9 @@ app = Flask(__name__)
 UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
-ACCESS_TOKEN = 'EAARY4nQ44yoBO906AC4SLJYxeYprWKZCgw6wPe7j15mcEnT6UPDDl2XBnofd0m4XsrUfG5FJ8YhkIPuZAMMvlymHSzZC1UiStdBcHNJ3yZCKQMwPRtLWdt1VZC9oiE44tRAJfB1iHgKAPZCMkrD5aMZAUdQ6DfAHOrGFynOsMa3oR6cWafZB2wLUjbsQMPF4fFkQAU7M8ZBzRqRrYmL8oS1KtU48R7VwHZAqs1eS10'  # Your actual token
+ACCESS_TOKEN = 'EAARY4nQ44yoBO906AC4SLJYxeYprWKZCgw6wPe7j15mcEnT6UPDDl2XBnofd0m4XsrUfG5FJ8YhkIPuZAMMvlymHSzZC1UiStdBcHNJ3yZCKQMwPRtLWdt1VZC9oiE44tRAJfB1iHgKAPZCMkrD5aMZAUdQ6DfAHOrGFynOsMa3oR6cWafZB2wLUjbsQMPF4fFkQAU7M8ZBzRqRrYmL8oS1KtU48R7VwHZAqs1eS10'
 PHONE_ID = '707899462402999'
 
-# In-memory user state store (reset on restart)
 user_states = {}
 
 def init_db():
@@ -21,13 +20,13 @@ def init_db():
     c.execute('DROP TABLE IF EXISTS products')
     c.execute('''
         CREATE TABLE products (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          main_product TEXT,
-          color        TEXT,
-          image        TEXT,
-          description  TEXT,
-          mrp          TEXT,
-          category     TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            main_product TEXT,
+            color        TEXT,
+            image        TEXT,
+            description  TEXT,
+            mrp          TEXT,
+            category     TEXT
         )
     ''')
     conn.commit()
@@ -144,8 +143,14 @@ def webhook():
             msg = messages[0]
             from_number = msg['from']
             user_msg = msg['text']['body'].strip().lower()
-
             state = user_states.get(from_number)
+
+            # universal return to menu
+            if user_msg == '1' and state != 'awaiting_option':
+                reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
+                user_states[from_number] = 'awaiting_option'
+                send_text(from_number, reply)
+                return "Back to menu", 200
 
             if user_msg in ('hi', 'hello', 'menu', 'start'):
                 reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
@@ -189,8 +194,15 @@ def webhook():
                     user_states.pop(from_number, None)
                     return "Product sent", 200
                 else:
-                    send_text(from_number, "Article not found. Please recheck the entered article number.")
+                    send_text(from_number, "❌ Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
+                    user_states[from_number] = 'awaiting_back_to_menu'
                     return "Invalid article", 200
+
+            if state == 'awaiting_back_to_menu' and user_msg == '1':
+                reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
+                user_states[from_number] = 'awaiting_option'
+                send_text(from_number, reply)
+                return "Returned to menu", 200
 
             send_text(from_number, "I could not understand. Please reply with 'menu' to see options.")
             return "Unhandled message", 200
