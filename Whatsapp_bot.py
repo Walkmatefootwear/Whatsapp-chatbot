@@ -145,7 +145,6 @@ def webhook():
             user_msg = msg['text']['body'].strip().lower()
             state = user_states.get(from_number)
 
-            # universal return to menu
             if user_msg == '1' and state != 'awaiting_option':
                 reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
                 user_states[from_number] = 'awaiting_option'
@@ -166,49 +165,42 @@ def webhook():
                     if row:
                         image_name, caption = row
                         image_path = os.path.join(UPLOAD, image_name)
+                        if not os.path.exists(image_path):
+                            send_text(from_number, f"❌ Image file not found:\n{image_path}")
+                            return "Image not found", 200
                         send_image(from_number, image_path, caption)
                     else:
                         send_text(from_number, "No catalogue available.")
                     user_states.pop(from_number, None)
                     return "Catalogue sent", 200
-
                 elif user_msg == '2':
                     send_text(from_number, "Please enter the article number (e.g., 2005).")
                     user_states[from_number] = 'awaiting_article'
                     return "Asking for article", 200
-
                 else:
                     send_text(from_number, "I could not understand. Please reply with 1 or 2.")
                     return "Invalid option", 200
 
             if state == 'awaiting_article':
-    conn = sqlite3.connect('products.db')
-    c = conn.cursor()
-    c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        image_name, caption = row
-        image_path = os.path.join(UPLOAD, image_name)
-
-        # Add this check
-        if not os.path.exists(image_path):
-            print(f"[ERROR] Image not found: {image_path}")
-            send_text(from_number, f"❌ Image file not found:\n{image_path}")
-            user_states.pop(from_number, None)
-            return "Image not found", 200
-
-        send_image(from_number, image_path, caption)
-        user_states.pop(from_number, None)
-        return "Product sent", 200
-    else:
-        send_text(from_number, "Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
-        user_states[from_number] = 'awaiting_option'
-        return "Invalid article", 200
-
+                conn = sqlite3.connect('products.db')
+                c = conn.cursor()
+                c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
+                row = c.fetchone()
+                conn.close()
+                if row:
+                    image_name, caption = row
+                    image_path = os.path.join(UPLOAD, image_name)
+                    if not os.path.exists(image_path):
+                        print(f"[ERROR] Image not found: {image_path}")
+                        send_text(from_number, f"❌ Image file not found:\n{image_path}")
+                        user_states.pop(from_number, None)
+                        return "Image not found", 200
+                    send_image(from_number, image_path, caption)
+                    user_states.pop(from_number, None)
+                    return "Product sent", 200
                 else:
                     send_text(from_number, "❌ Article not found. Please recheck the entered article number.\nReply 1 for main menu.")
-                    user_states[from_number] = 'awaiting_back_to_menu'
+                    user_states[from_number] = 'awaiting_option'
                     return "Invalid article", 200
 
             if state == 'awaiting_back_to_menu' and user_msg == '1':
@@ -250,7 +242,8 @@ def send_image(to, path, caption):
         )
     media_id = response.json().get("id")
     if not media_id:
-        send_text(to, "Failed to upload image.")
+        print("❌ Failed to upload image:", response.text)
+        send_text(to, "❌ Failed to upload image.")
         return
 
     msg_url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
