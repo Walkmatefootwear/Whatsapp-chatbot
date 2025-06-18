@@ -12,6 +12,9 @@ os.makedirs(UPLOAD, exist_ok=True)
 ACCESS_TOKEN = 'EAARY4nQ44yoBO7r120SZBju…DEZD'  # Your actual token
 PHONE_ID = '707899462402999'
 
+# In-memory user state store (reset on restart)
+user_states = {}
+
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -113,7 +116,6 @@ def delete_product(id):
         pass
     return redirect(url_for('admin'))
 
-# ✅ WhatsApp Webhook
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "Walkmate2025")
@@ -143,29 +145,55 @@ def webhook():
             from_number = msg['from']
             user_msg = msg['text']['body'].strip().lower()
 
-            conn = sqlite3.connect('products.db')
-            c = conn.cursor()
+            state = user_states.get(from_number)
 
-            # CASE 1: Exact color variant (main+color)
-            c.execute("SELECT image, description FROM products WHERE lower(main_product || '-' || color) = ?", (user_msg,))
-            row = c.fetchone()
-            if row:
-                image_name, caption = row
-                image_path = os.path.join(UPLOAD, image_name)
-                send_image(from_number, image_path, caption)
-                return "Image sent", 200
-
-            # CASE 2: Only main product number (list variants)
-            c.execute("SELECT main_product, color FROM products WHERE lower(main_product) = ?", (user_msg,))
-            variants = c.fetchall()
-            if variants:
-                opts = [f"{v[0]}-{v[1]}" for v in variants]
-                reply = "Please choose a variant:\n" + "\n".join(opts)
+            if user_msg in ('hi', 'hello', 'menu', 'start'):
+                reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
+                user_states[from_number] = 'awaiting_option'
                 send_text(from_number, reply)
-                return "Variants sent", 200
+                return "Menu sent", 200
 
-            send_text(from_number, "Product not found. Please enter a valid product number or variant.")
-            return "Fallback sent", 200
+            if state == 'awaiting_option':
+                if user_msg == '1':
+                    conn = sqlite3.connect('products.db')
+                    row = conn.execute("SELECT image, description FROM products WHERE category = 'catalogue' LIMIT 1").fetchone()
+                    conn.close()
+                    if row:
+                        image_name, caption = row
+                        image_path = os.path.join(UPLOAD, image_name)
+                        send_image(from_number, image_path, caption)
+                    else:
+                        send_text(from_number, "No catalogue available.")
+                    user_states.pop(from_number, None)
+                    return "Catalogue sent", 200
+
+                elif user_msg == '2':
+                    send_text(from_number, "Please enter the article number (e.g., 2005).")
+                    user_states[from_number] = 'awaiting_article'
+                    return "Asking for article", 200
+
+                else:
+                    send_text(from_number, "I could not understand. Please reply with 1 or 2.")
+                    return "Invalid option", 200
+
+            if state == 'awaiting_article':
+                conn = sqlite3.connect('products.db')
+                c = conn.cursor()
+                c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
+                row = c.fetchone()
+                conn.close()
+                if row:
+                    image_name, caption = row
+                    image_path = os.path.join(UPLOAD, image_name)
+                    send_image(from_number, image_path, caption)
+                    user_states.pop(from_number, None)
+                    return "Product sent", 200
+                else:
+                    send_text(from_number, "Article not found. Please recheck the entered article number.")
+                    return "Invalid article", 200
+
+            send_text(from_number, "I could not understand. Please reply with 'menu' to see options.")
+            return "Unhandled message", 200
 
         except Exception as e:
             print("Error:", e)
@@ -173,7 +201,6 @@ def webhook():
 
     return "Webhook received", 200
 
-# ✅ WhatsApp Message Functions
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
