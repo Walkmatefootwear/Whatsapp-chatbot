@@ -9,7 +9,7 @@ app = Flask(__name__)
 UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
-ACCESS_TOKEN = 'EAARY4nQ44yoBO7r120SZBju…DEZD'  # Your actual token
+ACCESS_TOKEN = 'EAARY4nQ44yoBO906AC4SLJYxeYprWKZCgw6wPe7j15mcEnT6UPDDl2XBnofd0m4XsrUfG5FJ8YhkIPuZAMMvlymHSzZC1UiStdBcHNJ3yZCKQMwPRtLWdt1VZC9oiE44tRAJfB1iHgKAPZCMkrD5aMZAUdQ6DfAHOrGFynOsMa3oR6cWafZB2wLUjbsQMPF4fFkQAU7M8ZBzRqRrYmL8oS1KtU48R7VwHZAqs1eS10'  # Your actual token
 PHONE_ID = '707899462402999'
 
 # In-memory user state store (reset on restart)
