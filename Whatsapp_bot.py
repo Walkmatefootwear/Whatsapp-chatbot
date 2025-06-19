@@ -12,7 +12,6 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-app.permanent_session_lifetime = False  # session expires on browser/tab close
 UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
@@ -33,7 +32,6 @@ def login():
         username = request.form['username']
         password = request.form['password']
         if username == 'Walkmate' and password == 'Export@2025':
-            session.permanent = False
             session['user'] = username
             return redirect(url_for('admin'))
         else:
@@ -53,6 +51,42 @@ def admin():
     prods = conn.execute("SELECT * FROM products").fetchall()
     conn.close()
     return render_template('admin.html', products=prods)
+
+@app.route('/add', methods=['POST'])
+def add_product():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    try:
+        main_product = request.form['main_product']
+        option = request.form['option']
+        description = request.form['description']
+        mrp = request.form['mrp']
+        category = request.form['category']
+        image_file = request.files['image']
+
+        if image_file and image_file.filename:
+            filename = secure_filename(image_file.filename)
+            save_path = os.path.join(UPLOAD, filename)
+            img = Image.open(image_file)
+            img.save(save_path, optimize=True, quality=85)
+        else:
+            return "Image is required.", 400
+
+        conn = sqlite3.connect('products.db')
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO products (main_product, option, image, description, mrp, category)
+            VALUES (?, ?, ?, ?, ?, ?)""",
+            (main_product, option, filename, description, mrp, category))
+        conn.commit()
+        conn.close()
+
+        return redirect(url_for('admin', added=1))
+    
+    except Exception as e:
+        print("Error adding product:", e)
+        return "Failed to add product", 500
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
