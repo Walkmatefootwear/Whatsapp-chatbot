@@ -12,6 +12,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
+app.permanent_session_lifetime = False  # session expires on browser/tab close
 UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
@@ -32,6 +33,7 @@ def login():
         username = request.form['username']
         password = request.form['password']
         if username == 'Walkmate' and password == 'Export@2025':
+            session.permanent = False
             session['user'] = username
             return redirect(url_for('admin'))
         else:
