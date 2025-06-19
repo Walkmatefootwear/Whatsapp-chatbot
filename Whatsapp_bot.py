@@ -88,6 +88,16 @@ def add_product():
         print("Error adding product:", e)
         return "Failed to add product", 500
 
+@app.route('/delete/<int:id>', methods=['POST'])
+def delete_product(id):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    conn = sqlite3.connect('products.db')
+    conn.execute("DELETE FROM products WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin'))
+
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
