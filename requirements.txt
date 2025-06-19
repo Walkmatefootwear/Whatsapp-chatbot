@@ -24,7 +24,7 @@ Pygments==2.19.1
 # pypiwin32==223
 python-dateutil==2.9.0.post0
 # pywin32==308
-**python-dotenv==1.0.1**
+python-dotenv==1.0.1
 requests==2.32.3
 s3transfer==0.13.0
 six==1.17.0
