@@ -16,7 +16,8 @@ UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
-PHONE_ID = '639181935952703'
+PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 user_states = {}
 
 @app.route('/')
@@ -53,8 +54,6 @@ def admin():
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "Walkmate2025")
-
     if request.method == 'GET':
         mode = request.args.get("hub.mode")
         token = request.args.get("hub.verify_token")
