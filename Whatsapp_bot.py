@@ -12,7 +12,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = os.path.join('static', 'images')
+UPLOAD = os.path.join('Static', 'Images')  # Match your actual folder structure
 os.makedirs(UPLOAD, exist_ok=True)
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
@@ -76,6 +76,16 @@ def add_product():
         conn = sqlite3.connect('products.db')
         c = conn.cursor()
         c.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                main_product TEXT,
+                option TEXT,
+                image TEXT,
+                description TEXT,
+                mrp TEXT,
+                category TEXT
+            )""")
+        c.execute("""
             INSERT INTO products (main_product, option, image, description, mrp, category)
             VALUES (?, ?, ?, ?, ?, ?)""",
             (main_product, option, filename, description, mrp, category))
@@ -85,8 +95,9 @@ def add_product():
         return redirect(url_for('admin', added=1))
 
     except Exception as e:
-        print("Error adding product:", e)
-        return "Failed to add product", 500
+        import traceback
+        traceback.print_exc()
+        return f"Failed to add product: {str(e)}", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_product(id):
