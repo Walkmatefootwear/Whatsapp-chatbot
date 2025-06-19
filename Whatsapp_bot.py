@@ -40,7 +40,7 @@ def login():
 
 @app.route('/logout')
 def logout():
-    session.pop('user', None)
+    session.clear()
     return redirect(url_for('login'))
 
 @app.route('/admin')
@@ -83,7 +83,7 @@ def add_product():
         conn.close()
 
         return redirect(url_for('admin', added=1))
-    
+
     except Exception as e:
         print("Error adding product:", e)
         return "Failed to add product", 500
