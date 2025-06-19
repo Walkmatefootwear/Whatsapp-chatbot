@@ -39,7 +39,7 @@
               <input class="form-control" name="description" placeholder="Description" required>
             </div>
             <div class="col-md-3 mb-2">
-              <input class="form-control" name="mrp" placeholder="MRP">
+              <input type="number" class="form-control" name="mrp" placeholder="MRP">
             </div>
             <div class="col-md-3 mb-2">
               <input class="form-control" name="category" placeholder="Category">
@@ -74,7 +74,7 @@
             </div>
             <div class="col-3 text-end pe-3">
               <form action="{{ url_for('delete_product', id=p[0]) }}" method="post" style="display:inline;">
-                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this?')">Delete</button>
+                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this product?')">Delete</button>
               </form>
             </div>
           </div>
