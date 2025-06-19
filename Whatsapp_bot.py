@@ -5,13 +5,17 @@ import requests
 from flask import Flask, request, render_template, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from PIL import Image
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
-ACCESS_TOKEN = 'EAARY4nQ44yoBO3mY5EZC2wLYc8CBinIoQqH4UdsvoFBmZBL8g7EG7NcALz93JhHdoXyv9316XRAaYZAmb3XQc72hBIX9knnzpZASYhBqtERZApBmuYjwxgZBPPL92SgZAZAhgHJX04xvf0gvp1jIXceWEthJyIMgDKPZCgFW4q0NTcrSoPb0vNo237sSWzuWFndpOnLrpJpiU70VIGtVgAEH6RHPNjykZD'
+ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = '639181935952703'
 user_states = {}
 
