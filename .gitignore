@@ -1,0 +1,26 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environment variable file
+.env
+
+# SQLite DB file
+products.db
+
+# Uploaded product images (optional: allow only if you store permanent media elsewhere)
+static/images/*
+!static/images/.gitkeep  # Keeps the empty folder in Git
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# OS and IDE files
+.DS_Store
+.vscode/
+*.swp
+
+# Gunicorn or server PID files
+*.pid
