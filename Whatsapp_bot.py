@@ -6,13 +6,14 @@ from flask import Flask, request, render_template, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from PIL import Image
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = os.path.join('Static', 'Images')  # Match your actual folder structure
+UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
@@ -22,20 +23,15 @@ user_states = {}
 
 @app.route('/')
 def home():
-    if 'user' in session:
-        return redirect(url_for('admin'))
-    return redirect(url_for('login'))
+    return redirect(url_for('admin')) if 'user' in session else redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        if username == 'Walkmate' and password == 'Export@2025':
-            session['user'] = username
+        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
+            session['user'] = 'Walkmate'
             return redirect(url_for('admin'))
-        else:
-            return render_template('login.html', error='Invalid credentials')
+        return render_template('login.html', error='Invalid credentials')
     return render_template('login.html')
 
 @app.route('/logout')
@@ -61,17 +57,23 @@ def add_product():
         main_product = request.form['main_product']
         option = request.form['option']
         description = request.form['description']
-        mrp = request.form['mrp']
-        category = request.form['category']
+        mrp = request.form.get('mrp', '')
+        category = request.form.get('category', '')
         image_file = request.files['image']
 
-        if image_file and image_file.filename:
-            filename = secure_filename(image_file.filename)
-            save_path = os.path.join(UPLOAD, filename)
+        if not image_file or not image_file.filename:
+            return "Image is required.", 400
+
+        ext = os.path.splitext(image_file.filename)[1]
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        filename = secure_filename(f"{main_product}_{option}_{timestamp}{ext}")
+        save_path = os.path.join(UPLOAD, filename)
+
+        if ext.lower() in ['.jpg', '.jpeg', '.png', '.webp']:
             img = Image.open(image_file)
             img.save(save_path, optimize=True, quality=85)
         else:
-            return "Image is required.", 400
+            image_file.save(save_path)
 
         conn = sqlite3.connect('products.db')
         c = conn.cursor()
@@ -257,4 +259,4 @@ def send_image(to, path, caption):
     )
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
+    app.run(debug=True)
