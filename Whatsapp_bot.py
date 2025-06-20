@@ -6,7 +6,6 @@ from flask import Flask, request, render_template, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from PIL import Image
 from dotenv import load_dotenv
-from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -21,23 +20,50 @@ PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 user_states = {}
 
+
+def init_db():
+    conn = sqlite3.connect('products.db')
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            main_product TEXT,
+            option TEXT,
+            image TEXT,
+            description TEXT,
+            mrp TEXT,
+            category TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
 @app.route('/')
 def home():
-    return redirect(url_for('admin')) if 'user' in session else redirect(url_for('login'))
+    if 'user' in session:
+        return redirect(url_for('admin'))
+    return redirect(url_for('login'))
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
-            session['user'] = 'Walkmate'
+        username = request.form['username']
+        password = request.form['password']
+        if username == 'Walkmate' and password == 'Export@2025':
+            session['user'] = username
             return redirect(url_for('admin'))
-        return render_template('login.html', error='Invalid credentials')
+        else:
+            return render_template('login.html', error='Invalid credentials')
     return render_template('login.html')
+
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
 
 @app.route('/admin')
 def admin():
@@ -48,6 +74,7 @@ def admin():
     conn.close()
     return render_template('admin.html', products=prods)
 
+
 @app.route('/add', methods=['POST'])
 def add_product():
     if 'user' not in session:
@@ -57,36 +84,20 @@ def add_product():
         main_product = request.form['main_product']
         option = request.form['option']
         description = request.form['description']
-        mrp = request.form.get('mrp', '')
-        category = request.form.get('category', '')
+        mrp = request.form['mrp']
+        category = request.form['category']
         image_file = request.files['image']
 
-        if not image_file or not image_file.filename:
-            return "Image is required.", 400
-
-        ext = os.path.splitext(image_file.filename)[1]
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        filename = secure_filename(f"{main_product}_{option}_{timestamp}{ext}")
-        save_path = os.path.join(UPLOAD, filename)
-
-        if ext.lower() in ['.jpg', '.jpeg', '.png', '.webp']:
+        if image_file and image_file.filename:
+            filename = secure_filename(image_file.filename)
+            save_path = os.path.join(UPLOAD, filename)
             img = Image.open(image_file)
             img.save(save_path, optimize=True, quality=85)
         else:
-            image_file.save(save_path)
+            return "Image is required.", 400
 
         conn = sqlite3.connect('products.db')
         c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                main_product TEXT,
-                option TEXT,
-                image TEXT,
-                description TEXT,
-                mrp TEXT,
-                category TEXT
-            )""")
         c.execute("""
             INSERT INTO products (main_product, option, image, description, mrp, category)
             VALUES (?, ?, ?, ?, ?, ?)""",
@@ -101,6 +112,7 @@ def add_product():
         traceback.print_exc()
         return f"Failed to add product: {str(e)}", 500
 
+
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_product(id):
     if 'user' not in session:
@@ -110,6 +122,7 @@ def delete_product(id):
     conn.commit()
     conn.close()
     return redirect(url_for('admin'))
+
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
@@ -204,6 +217,7 @@ def webhook():
 
     return "Webhook received", 200
 
+
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -216,6 +230,7 @@ def send_text(to, msg):
         "Content-Type": "application/json"
     }
     requests.post(url, json=payload, headers=headers)
+
 
 def send_image(to, path, caption):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
@@ -235,7 +250,6 @@ def send_image(to, path, caption):
             data={"messaging_product": "whatsapp"}
         )
 
-    print("Upload result:", response.text)
     media_id = response.json().get("id")
     if not media_id:
         send_text(to, f"❌ Failed to upload image:\n{response.text}")
@@ -258,5 +272,7 @@ def send_image(to, path, caption):
         }
     )
 
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    init_db()
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
