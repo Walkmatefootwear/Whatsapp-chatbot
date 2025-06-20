@@ -15,6 +15,28 @@ app.secret_key = 'walkmate-secret-key'
 UPLOAD = os.path.join('static', 'images')
 os.makedirs(UPLOAD, exist_ok=True)
 
+#Removable
+
+@app.route('/init-upload')
+def upload_images_to_disk():
+    local_path = 'static/images'            # Folder in your repo
+    render_disk_path = '/static/Images'     # Render disk mount path (case-sensitive!)
+
+    try:
+        count = 0
+        for filename in os.listdir(local_path):
+            source = os.path.join(local_path, filename)
+            destination = os.path.join(render_disk_path, filename)
+
+            if os.path.isfile(source):
+                shutil.copy(source, destination)
+                count += 1
+
+        return f"{count} image(s) copied to Render disk successfully."
+    except Exception as e:
+        return f"Error copying images: {str(e)}"
+#Removable
+
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
