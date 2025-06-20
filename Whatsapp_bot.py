@@ -13,14 +13,14 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = '/static/Images'  # Use persistent disk
+UPLOAD = '/static/Images'  # Persistent disk path
 
 os.makedirs(UPLOAD, exist_ok=True)
 
 @app.route('/init-upload')
 def upload_images_to_disk():
-    local_path = 'static/images'            # Folder in repo (GitHub)
-    render_disk_path = '/static/Images'     # Render disk mount path (persistent)
+    local_path = 'static/images'            # GitHub images folder
+    render_disk_path = '/static/Images'     # Render disk mount path
 
     try:
         count = 0
@@ -35,7 +35,6 @@ def upload_images_to_disk():
         return f"{count} image(s) copied to Render disk successfully."
     except Exception as e:
         return f"Error copying images: {str(e)}"
-
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
