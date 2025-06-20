@@ -2,6 +2,7 @@ import os
 import sqlite3
 import mimetypes
 import requests
+import shutil
 from flask import Flask, request, render_template, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -12,15 +13,14 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = os.path.join('static', 'images')
-os.makedirs(UPLOAD, exist_ok=True)
+UPLOAD = '/static/Images'  # Use persistent disk
 
-#Removable
+os.makedirs(UPLOAD, exist_ok=True)
 
 @app.route('/init-upload')
 def upload_images_to_disk():
-    local_path = 'static/images'            # Folder in your repo
-    render_disk_path = '/static/Images'     # Render disk mount path (case-sensitive!)
+    local_path = 'static/images'            # Folder in repo (GitHub)
+    render_disk_path = '/static/Images'     # Render disk mount path (persistent)
 
     try:
         count = 0
@@ -35,13 +35,12 @@ def upload_images_to_disk():
         return f"{count} image(s) copied to Render disk successfully."
     except Exception as e:
         return f"Error copying images: {str(e)}"
-#Removable
+
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 user_states = {}
-
 
 def init_db():
     conn = sqlite3.connect('products.db')
@@ -60,13 +59,11 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 @app.route('/')
 def home():
     if 'user' in session:
         return redirect(url_for('admin'))
     return redirect(url_for('login'))
-
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -80,12 +77,10 @@ def login():
             return render_template('login.html', error='Invalid credentials')
     return render_template('login.html')
 
-
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
-
 
 @app.route('/admin')
 def admin():
@@ -95,7 +90,6 @@ def admin():
     prods = conn.execute("SELECT * FROM products").fetchall()
     conn.close()
     return render_template('admin.html', products=prods)
-
 
 @app.route('/add', methods=['POST'])
 def add_product():
@@ -134,7 +128,6 @@ def add_product():
         traceback.print_exc()
         return f"Failed to add product: {str(e)}", 500
 
-
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_product(id):
     if 'user' not in session:
@@ -144,7 +137,6 @@ def delete_product(id):
     conn.commit()
     conn.close()
     return redirect(url_for('admin'))
-
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
@@ -239,7 +231,6 @@ def webhook():
 
     return "Webhook received", 200
 
-
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -252,7 +243,6 @@ def send_text(to, msg):
         "Content-Type": "application/json"
     }
     requests.post(url, json=payload, headers=headers)
-
 
 def send_image(to, path, caption):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
@@ -293,7 +283,6 @@ def send_image(to, path, caption):
             }
         }
     )
-
 
 if __name__ == '__main__':
     init_db()
