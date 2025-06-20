@@ -15,15 +15,19 @@ app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 UPLOAD = '/static/Images'  # Persistent disk path
 
-os.makedirs(UPLOAD, exist_ok=True)
+if not os.path.exists(UPLOAD):
+    os.makedirs(UPLOAD)
 
-@app.route('/init-upload')
+@app.route('/init-upload', methods=['GET'])
 def upload_images_to_disk():
     local_path = 'static/images'            # GitHub images folder
     render_disk_path = '/static/Images'     # Render disk mount path
 
     try:
         count = 0
+        if not os.path.exists(local_path):
+            return f"Local folder not found: {local_path}", 404
+
         for filename in os.listdir(local_path):
             source = os.path.join(local_path, filename)
             destination = os.path.join(render_disk_path, filename)
