@@ -18,6 +18,7 @@ LOCAL_IMAGE_PATH = 'static/images'
 if not os.path.exists(UPLOAD):
     os.makedirs(UPLOAD)
 
+# Upload local images to Render disk (optional helper)
 @app.route('/init-upload', methods=['GET'])
 def upload_images_to_disk():
     try:
@@ -79,10 +80,10 @@ def webhook():
 
             msg = messages[0]
             from_number = msg['from']
-            user_msg = msg['text']['body'].strip().lower()
+            user_msg = msg['text']['body'].strip()
             state = user_states.get(from_number)
 
-            if user_msg in ('hi', 'hello', 'menu', 'start') or user_msg == '1':
+            if user_msg.lower() in ('hi', 'hello', 'menu', 'start') or user_msg == '1':
                 reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
                 user_states[from_number] = 'awaiting_option'
                 send_text(from_number, reply)
@@ -120,7 +121,8 @@ def webhook():
             if state == 'awaiting_article':
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
-                c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
+                print(f"Looking for product: {user_msg}")
+                c.execute("SELECT image, description FROM products WHERE main_product = ? COLLATE NOCASE", (user_msg,))
                 rows = c.fetchall()
                 conn.close()
 
@@ -202,6 +204,8 @@ def send_image(to, path, caption):
         }
     )
 
+# ---------- Admin Panel Routes ----------
+
 @app.route('/')
 def home():
     return redirect('/login')
@@ -232,7 +236,7 @@ def add_product():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    main_product = request.form['main_product']
+    main_product = request.form['main_product'].strip()
     option = request.form['option']
     description = request.form['description']
     mrp = request.form['mrp']
@@ -262,10 +266,10 @@ def delete_product(id):
         return redirect(url_for('login'))
 
     conn = sqlite3.connect('products.db')
-    conn.execute("DELETE FROM products WHERE id = ?", (id,))
+    c = conn.cursor()
+    c.execute("DELETE FROM products WHERE id = ?", (id,))
     conn.commit()
     conn.close()
-
     return redirect(url_for('admin'))
 
 @app.route('/logout')
