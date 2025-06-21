@@ -13,21 +13,20 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 UPLOAD = 'static/Images'
+LOCAL_IMAGE_PATH = 'static/images'
 
 if not os.path.exists(UPLOAD):
     os.makedirs(UPLOAD)
 
 @app.route('/init-upload', methods=['GET'])
 def upload_images_to_disk():
-    local_path = 'static/images'
-    render_disk_path = 'static/Images'
     try:
         count = 0
-        if not os.path.exists(local_path):
-            return f"Local folder not found: {local_path}", 404
-        for filename in os.listdir(local_path):
-            source = os.path.join(local_path, filename)
-            destination = os.path.join(render_disk_path, filename)
+        if not os.path.exists(LOCAL_IMAGE_PATH):
+            return f"Local folder not found: {LOCAL_IMAGE_PATH}", 404
+        for filename in os.listdir(LOCAL_IMAGE_PATH):
+            source = os.path.join(LOCAL_IMAGE_PATH, filename)
+            destination = os.path.join(UPLOAD, filename)
             if os.path.isfile(source):
                 shutil.copy(source, destination)
                 count += 1
@@ -56,88 +55,6 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-
-@app.route('/')
-def home():
-    if 'user' in session:
-        return redirect(url_for('admin'))
-    return redirect(url_for('login'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        if username == 'Walkmate' and password == 'Export@2025':
-            session['user'] = username
-            return redirect(url_for('admin'))
-        else:
-            return render_template('login.html', error='Invalid credentials')
-    return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-@app.route('/admin')
-def admin():
-    if 'user' not in session:
-        return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
-    prods = conn.execute("SELECT * FROM products").fetchall()
-    conn.close()
-    return render_template('admin.html', products=prods)
-
-@app.route('/add', methods=['POST'])
-def add_product():
-    if 'user' not in session:
-        return redirect(url_for('login'))
-    try:
-        main_product = request.form['main_product']
-        option = request.form['option']
-        description = request.form['description']
-        mrp = request.form['mrp']
-        category = request.form['category']
-        image_file = request.files['image']
-        if image_file and image_file.filename:
-            filename = secure_filename(image_file.filename)
-            save_path = os.path.join(UPLOAD, filename)
-            img = Image.open(image_file)
-            img.save(save_path, optimize=True, quality=85)
-        else:
-            return "Image is required.", 400
-        conn = sqlite3.connect('products.db')
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO products (main_product, option, image, description, mrp, category)
-            VALUES (?, ?, ?, ?, ?, ?)""",
-            (main_product, option, filename, description, mrp, category))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('admin', added=1))
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"Failed to add product: {str(e)}", 500
-
-@app.route('/delete/<int:id>', methods=['POST'])
-def delete_product(id):
-    if 'user' not in session:
-        return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
-    c = conn.cursor()
-    c.execute("SELECT image FROM products WHERE id = ?", (id,))
-    row = c.fetchone()
-    if row:
-        image_filename = row[0]
-        image_path = os.path.join(UPLOAD, image_filename)
-        if os.path.exists(image_path):
-            os.remove(image_path)
-    c.execute("DELETE FROM products WHERE id = ?", (id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('admin'))
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
@@ -180,9 +97,13 @@ def webhook():
                         image_name, caption = row
                         image_path = os.path.join(UPLOAD, image_name)
                         if not os.path.exists(image_path):
-                            send_text(from_number, f"❌ Image file not found:\n{image_path}")
-                        else:
+                            fallback_path = os.path.join(LOCAL_IMAGE_PATH, image_name)
+                            if os.path.exists(fallback_path):
+                                shutil.copy(fallback_path, image_path)
+                        if os.path.exists(image_path):
                             send_image(from_number, image_path, caption)
+                        else:
+                            send_text(from_number, f"❌ Image file not found: {image_name}")
                     else:
                         send_text(from_number, "No catalogue available.")
                     user_states.pop(from_number, None)
@@ -193,41 +114,39 @@ def webhook():
                     user_states[from_number] = 'awaiting_article'
                     return "Asking for product name", 200
                 else:
-                    send_text(from_number, "I could not understand. Please reply with 1 or 2.")
+                    send_text(from_number, "Invalid option. Reply 1 or 2.")
                     return "Invalid option", 200
 
             if state == 'awaiting_article':
-                if user_msg == '1':
-                    user_states[from_number] = 'awaiting_option'
-                    send_text(from_number, "Back to main menu:\n1. View Catalogue\n2. View Product")
-                    return "Back to menu", 200
-
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
                 c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
                 rows = c.fetchall()
                 conn.close()
+
                 if not rows:
-                    send_text(from_number, "❌ No matching product found.\nType a correct product name or reply 1 for main menu.")
+                    send_text(from_number, "❌ No matching product found.")
                     return "No matches", 200
 
                 for image_name, caption in rows:
                     image_path = os.path.join(UPLOAD, image_name)
+                    if not os.path.exists(image_path):
+                        fallback_path = os.path.join(LOCAL_IMAGE_PATH, image_name)
+                        if os.path.exists(fallback_path):
+                            shutil.copy(fallback_path, image_path)
                     if os.path.exists(image_path):
                         send_image(from_number, image_path, caption)
                     else:
-                        send_text(from_number, f"❌ Image not found for: {image_name}")
-
-                send_text(from_number, "✅ Done. Type another product name to continue or 1 to go back to menu.")
+                        send_text(from_number, f"❌ Image not found: {image_name}")
+                send_text(from_number, "✅ Done. Type another name or 1 to go back.")
                 return "Product images sent", 200
 
-            send_text(from_number, "I could not understand. Reply 'menu' to restart.")
+            send_text(from_number, "❌ Unrecognized input. Type 'menu' to restart.")
             return "Unhandled message", 200
 
         except Exception as e:
             print("Webhook error:", e)
             return "Error", 500
-
     return "Webhook received", 200
 
 def send_text(to, msg):
@@ -245,12 +164,14 @@ def send_text(to, msg):
 
 def send_image(to, path, caption):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
-        send_text(to, f"❌ File not found or empty:\n{path}")
+        send_text(to, f"❌ File not found or empty: {path}")
         return
+
     mime, _ = mimetypes.guess_type(path)
     if mime not in ['image/jpeg', 'image/png', 'image/webp']:
         send_text(to, f"❌ Invalid file type: {mime or 'unknown'}")
         return
+
     with open(path, 'rb') as f:
         response = requests.post(
             f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
@@ -258,10 +179,12 @@ def send_image(to, path, caption):
             files={"file": (os.path.basename(path), f, mime)},
             data={"messaging_product": "whatsapp"}
         )
+
     media_id = response.json().get("id")
     if not media_id:
-        send_text(to, f"❌ Failed to upload image:\n{response.text}")
+        send_text(to, f"❌ Failed to upload image: {response.text}")
         return
+
     requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
         headers={
@@ -278,26 +201,6 @@ def send_image(to, path, caption):
             }
         }
     )
-
-@app.route('/browse-images')
-def browse_images():
-    try:
-        if 'user' not in session:
-            return redirect(url_for('login'))
-        folder = UPLOAD
-        if not os.path.exists(folder):
-            return f"Image folder not found: {folder}", 404
-        files = os.listdir(folder)
-        if not files:
-            return "✅ No images found in the folder."
-        html = "<h2>📂 static/Images</h2><ul style='list-style:none;'>"
-        for f in files:
-            file_url = url_for('static', filename=f'Images/{f}')
-            html += f"<li><a href='{file_url}' target='_blank'><img src='{file_url}' width='100' style='margin:10px;'> {f}</a></li>"
-        html += "</ul>"
-        return html
-    except Exception as e:
-        return f"<h3>❌ Internal Server Error:</h3><pre>{str(e)}</pre>", 500
 
 if __name__ == '__main__':
     init_db()
