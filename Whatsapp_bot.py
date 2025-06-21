@@ -3,7 +3,7 @@ import sqlite3
 import mimetypes
 import requests
 import shutil
-from flask import Flask, request, render_template, redirect, url_for, session
+from flask import Flask, request, render_template, redirect, url_for, session, send_from_directory
 from werkzeug.utils import secure_filename
 from PIL import Image
 from dotenv import load_dotenv
@@ -17,22 +17,6 @@ LOCAL_IMAGE_PATH = 'static/images'
 
 if not os.path.exists(UPLOAD):
     os.makedirs(UPLOAD)
-
-@app.route('/init-upload', methods=['GET'])
-def upload_images_to_disk():
-    try:
-        count = 0
-        if not os.path.exists(LOCAL_IMAGE_PATH):
-            return f"Local folder not found: {LOCAL_IMAGE_PATH}", 404
-        for filename in os.listdir(LOCAL_IMAGE_PATH):
-            source = os.path.join(LOCAL_IMAGE_PATH, filename)
-            destination = os.path.join(UPLOAD, filename)
-            if os.path.isfile(source):
-                shutil.copy(source, destination)
-                count += 1
-        return f"{count} image(s) copied to Render disk successfully."
-    except Exception as e:
-        return f"Error copying images: {str(e)}"
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
@@ -68,7 +52,6 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("Incoming WhatsApp message:", data)
         try:
             entry = data['entry'][0]
             changes = entry['changes'][0]
@@ -95,15 +78,7 @@ def webhook():
                     conn.close()
                     if row:
                         image_name, caption = row
-                        image_path = os.path.join(UPLOAD, image_name)
-                        if not os.path.exists(image_path):
-                            fallback_path = os.path.join(LOCAL_IMAGE_PATH, image_name)
-                            if os.path.exists(fallback_path):
-                                shutil.copy(fallback_path, image_path)
-                        if os.path.exists(image_path):
-                            send_image(from_number, image_path, caption)
-                        else:
-                            send_text(from_number, f"❌ Image file not found: {image_name}")
+                        send_image_logic(from_number, image_name, caption)
                     else:
                         send_text(from_number, "No catalogue available.")
                     user_states.pop(from_number, None)
@@ -120,12 +95,8 @@ def webhook():
             if state == 'awaiting_article':
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
-                print("Searching for product:", user_msg)
-                c.execute("SELECT * FROM products")
-                print("All products:", c.fetchall())
                 c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
                 rows = c.fetchall()
-                print("Matching rows:", rows)
                 conn.close()
 
                 if not rows:
@@ -133,15 +104,8 @@ def webhook():
                     return "No matches", 200
 
                 for image_name, caption in rows:
-                    image_path = os.path.join(UPLOAD, image_name)
-                    if not os.path.exists(image_path):
-                        fallback_path = os.path.join(LOCAL_IMAGE_PATH, image_name)
-                        if os.path.exists(fallback_path):
-                            shutil.copy(fallback_path, image_path)
-                    if os.path.exists(image_path):
-                        send_image(from_number, image_path, caption)
-                    else:
-                        send_text(from_number, f"❌ Image not found: {image_name}")
+                    send_image_logic(from_number, image_name, caption)
+
                 send_text(from_number, "✅ Done. Type another name or 1 to go back.")
                 return "Product images sent", 200
 
@@ -166,25 +130,25 @@ def send_text(to, msg):
     }
     requests.post(url, json=payload, headers=headers)
 
-def send_image(to, path, caption):
-    print("Sending image:", path)
-    if not os.path.exists(path) or os.path.getsize(path) == 0:
-        send_text(to, f"❌ File not found or empty: {path}")
+def send_image_logic(to, image_name, caption):
+    image_path = os.path.join(UPLOAD, image_name)
+    if not os.path.exists(image_path):
+        fallback_path = os.path.join(LOCAL_IMAGE_PATH, image_name)
+        if os.path.exists(fallback_path):
+            shutil.copy(fallback_path, image_path)
+
+    if not os.path.exists(image_path):
+        send_text(to, f"❌ Image not found: {image_name}")
         return
 
-    mime, _ = mimetypes.guess_type(path)
-    if mime not in ['image/jpeg', 'image/png', 'image/webp']:
-        send_text(to, f"❌ Invalid file type: {mime or 'unknown'}")
-        return
-
-    with open(path, 'rb') as f:
+    mime, _ = mimetypes.guess_type(image_path)
+    with open(image_path, 'rb') as f:
         response = requests.post(
             f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
             headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
-            files={"file": (os.path.basename(path), f, mime)},
+            files={"file": (image_name, f, mime)},
             data={"messaging_product": "whatsapp"}
         )
-    print("Upload response:", response.status_code, response.text)
 
     media_id = response.json().get("id")
     if not media_id:
@@ -193,18 +157,12 @@ def send_image(to, path, caption):
 
     requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
-        headers={
-            "Authorization": f"Bearer {ACCESS_TOKEN}",
-            "Content-Type": "application/json"
-        },
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},
         json={
             "messaging_product": "whatsapp",
             "to": to,
             "type": "image",
-            "image": {
-                "id": media_id,
-                "caption": caption
-            }
+            "image": {"id": media_id, "caption": caption}
         }
     )
 
@@ -238,11 +196,11 @@ def add_product():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    main_product = request.form['main_product'].strip().lower()
-    option = request.form['option']
-    description = request.form['description']
-    mrp = request.form['mrp']
-    category = request.form['category']
+    main_product = request.form['main_product'].strip()
+    option = request.form['option'].strip()
+    description = request.form['description'].strip()
+    mrp = request.form['mrp'].strip()
+    category = request.form['category'].strip()
 
     file = request.files['image']
     if file and file.filename:
@@ -256,10 +214,21 @@ def add_product():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
     c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-              (main_product, option, filename, description, mrp, category))
+              (main_product.lower(), option, filename, description, mrp, category))
     conn.commit()
     conn.close()
 
+    return redirect(url_for('admin'))
+
+@app.route('/delete/<int:id>', methods=['POST'])
+def delete_product(id):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    conn = sqlite3.connect('products.db')
+    conn.execute("DELETE FROM products WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
     return redirect(url_for('admin'))
 
 @app.route('/logout')
