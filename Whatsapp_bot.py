@@ -8,34 +8,29 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = 'static/Images'  # Persistent disk path
+UPLOAD = 'static/Images'
 
 if not os.path.exists(UPLOAD):
     os.makedirs(UPLOAD)
 
 @app.route('/init-upload', methods=['GET'])
 def upload_images_to_disk():
-    local_path = 'static/images'            # GitHub images folder
-    render_disk_path = 'static/Images'      # Render disk mount path
-
+    local_path = 'static/images'
+    render_disk_path = 'static/Images'
     try:
         count = 0
         if not os.path.exists(local_path):
             return f"Local folder not found: {local_path}", 404
-
         for filename in os.listdir(local_path):
             source = os.path.join(local_path, filename)
             destination = os.path.join(render_disk_path, filename)
-
             if os.path.isfile(source):
                 shutil.copy(source, destination)
                 count += 1
-
         return f"{count} image(s) copied to Render disk successfully."
     except Exception as e:
         return f"Error copying images: {str(e)}"
@@ -98,7 +93,6 @@ def admin():
 def add_product():
     if 'user' not in session:
         return redirect(url_for('login'))
-
     try:
         main_product = request.form['main_product']
         option = request.form['option']
@@ -106,7 +100,6 @@ def add_product():
         mrp = request.form['mrp']
         category = request.form['category']
         image_file = request.files['image']
-
         if image_file and image_file.filename:
             filename = secure_filename(image_file.filename)
             save_path = os.path.join(UPLOAD, filename)
@@ -114,7 +107,6 @@ def add_product():
             img.save(save_path, optimize=True, quality=85)
         else:
             return "Image is required.", 400
-
         conn = sqlite3.connect('products.db')
         c = conn.cursor()
         c.execute("""
@@ -123,9 +115,7 @@ def add_product():
             (main_product, option, filename, description, mrp, category))
         conn.commit()
         conn.close()
-
         return redirect(url_for('admin', added=1))
-
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -136,7 +126,15 @@ def delete_product(id):
     if 'user' not in session:
         return redirect(url_for('login'))
     conn = sqlite3.connect('products.db')
-    conn.execute("DELETE FROM products WHERE id = ?", (id,))
+    c = conn.cursor()
+    c.execute("SELECT image FROM products WHERE id = ?", (id,))
+    row = c.fetchone()
+    if row:
+        image_filename = row[0]
+        image_path = os.path.join(UPLOAD, image_filename)
+        if os.path.exists(image_path):
+            os.remove(image_path)
+    c.execute("DELETE FROM products WHERE id = ?", (id,))
     conn.commit()
     conn.close()
     return redirect(url_for('admin'))
@@ -154,7 +152,6 @@ def webhook():
     if request.method == 'POST':
         data = request.get_json()
         print("Incoming WhatsApp message:", data)
-
         try:
             entry = data['entry'][0]
             changes = entry['changes'][0]
@@ -210,7 +207,6 @@ def webhook():
                 c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
                 rows = c.fetchall()
                 conn.close()
-
                 if not rows:
                     send_text(from_number, "❌ No matching product found.\nType a correct product name or reply 1 for main menu.")
                     return "No matches", 200
@@ -251,12 +247,10 @@ def send_image(to, path, caption):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         send_text(to, f"❌ File not found or empty:\n{path}")
         return
-
     mime, _ = mimetypes.guess_type(path)
     if mime not in ['image/jpeg', 'image/png', 'image/webp']:
         send_text(to, f"❌ Invalid file type: {mime or 'unknown'}")
         return
-
     with open(path, 'rb') as f:
         response = requests.post(
             f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
@@ -264,12 +258,10 @@ def send_image(to, path, caption):
             files={"file": (os.path.basename(path), f, mime)},
             data={"messaging_product": "whatsapp"}
         )
-
     media_id = response.json().get("id")
     if not media_id:
         send_text(to, f"❌ Failed to upload image:\n{response.text}")
         return
-
     requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
         headers={
@@ -292,23 +284,18 @@ def browse_images():
     try:
         if 'user' not in session:
             return redirect(url_for('login'))
-
-        folder = UPLOAD  # static/Images
+        folder = UPLOAD
         if not os.path.exists(folder):
             return f"Image folder not found: {folder}", 404
-
         files = os.listdir(folder)
         if not files:
             return "✅ No images found in the folder."
-
         html = "<h2>📂 static/Images</h2><ul style='list-style:none;'>"
         for f in files:
             file_url = url_for('static', filename=f'Images/{f}')
             html += f"<li><a href='{file_url}' target='_blank'><img src='{file_url}' width='100' style='margin:10px;'> {f}</a></li>"
         html += "</ul>"
-
         return html
-
     except Exception as e:
         return f"<h3>❌ Internal Server Error:</h3><pre>{str(e)}</pre>", 500
 
