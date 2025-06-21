@@ -289,21 +289,28 @@ def send_image(to, path, caption):
 
 @app.route('/browse-images')
 def browse_images():
-    if 'user' not in session:
-        return redirect(url_for('login'))
+    try:
+        if 'user' not in session:
+            return redirect(url_for('login'))
 
-    folder = UPLOAD  # static/Images
-    if not os.path.exists(folder):
-        return "Image folder not found."
+        folder = UPLOAD  # static/Images
+        if not os.path.exists(folder):
+            return f"Image folder not found: {folder}", 404
 
-    files = os.listdir(folder)
-    html = "<h2>\ud83d\udcc2 static/Images</h2><ul style='list-style:none;'>"
-    for f in files:
-        file_url = url_for('static', filename=f'Images/{f}')
-        html += f"<li><a href='{file_url}' target='_blank'><img src='{file_url}' width='100' style='margin:10px;'> {f}</a></li>"
-    html += "</ul>"
+        files = os.listdir(folder)
+        if not files:
+            return "✅ No images found in the folder."
 
-    return html
+        html = "<h2>📂 static/Images</h2><ul style='list-style:none;'>"
+        for f in files:
+            file_url = url_for('static', filename=f'Images/{f}')
+            html += f"<li><a href='{file_url}' target='_blank'><img src='{file_url}' width='100' style='margin:10px;'> {f}</a></li>"
+        html += "</ul>"
+
+        return html
+
+    except Exception as e:
+        return f"<h3>❌ Internal Server Error:</h3><pre>{str(e)}</pre>", 500
 
 if __name__ == '__main__':
     init_db()
