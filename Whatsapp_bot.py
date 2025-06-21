@@ -18,7 +18,6 @@ LOCAL_IMAGE_PATH = 'static/images'
 if not os.path.exists(UPLOAD):
     os.makedirs(UPLOAD)
 
-# Upload local images to Render disk (optional helper)
 @app.route('/init-upload', methods=['GET'])
 def upload_images_to_disk():
     try:
@@ -80,10 +79,10 @@ def webhook():
 
             msg = messages[0]
             from_number = msg['from']
-            user_msg = msg['text']['body'].strip()
+            user_msg = msg['text']['body'].strip().lower()
             state = user_states.get(from_number)
 
-            if user_msg.lower() in ('hi', 'hello', 'menu', 'start') or user_msg == '1':
+            if user_msg in ('hi', 'hello', 'menu', 'start') or user_msg == '1':
                 reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
                 user_states[from_number] = 'awaiting_option'
                 send_text(from_number, reply)
@@ -121,9 +120,12 @@ def webhook():
             if state == 'awaiting_article':
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
-                print(f"Looking for product: {user_msg}")
-                c.execute("SELECT image, description FROM products WHERE main_product = ? COLLATE NOCASE", (user_msg,))
+                print("Searching for product:", user_msg)
+                c.execute("SELECT * FROM products")
+                print("All products:", c.fetchall())
+                c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
                 rows = c.fetchall()
+                print("Matching rows:", rows)
                 conn.close()
 
                 if not rows:
@@ -165,6 +167,7 @@ def send_text(to, msg):
     requests.post(url, json=payload, headers=headers)
 
 def send_image(to, path, caption):
+    print("Sending image:", path)
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         send_text(to, f"❌ File not found or empty: {path}")
         return
@@ -181,6 +184,7 @@ def send_image(to, path, caption):
             files={"file": (os.path.basename(path), f, mime)},
             data={"messaging_product": "whatsapp"}
         )
+    print("Upload response:", response.status_code, response.text)
 
     media_id = response.json().get("id")
     if not media_id:
@@ -203,8 +207,6 @@ def send_image(to, path, caption):
             }
         }
     )
-
-# ---------- Admin Panel Routes ----------
 
 @app.route('/')
 def home():
@@ -236,7 +238,7 @@ def add_product():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    main_product = request.form['main_product'].strip()
+    main_product = request.form['main_product'].strip().lower()
     option = request.form['option']
     description = request.form['description']
     mrp = request.form['mrp']
@@ -258,18 +260,6 @@ def add_product():
     conn.commit()
     conn.close()
 
-    return redirect(url_for('admin'))
-
-@app.route('/delete/<int:id>', methods=['POST'])
-def delete_product(id):
-    if 'user' not in session:
-        return redirect(url_for('login'))
-
-    conn = sqlite3.connect('products.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM products WHERE id = ?", (id,))
-    conn.commit()
-    conn.close()
     return redirect(url_for('admin'))
 
 @app.route('/logout')
