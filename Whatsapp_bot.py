@@ -202,8 +202,6 @@ def send_image(to, path, caption):
         }
     )
 
-# -------- HTML and UI Routes --------
-
 @app.route('/')
 def home():
     return redirect('/login')
@@ -228,6 +226,35 @@ def admin():
     prods = conn.execute("SELECT * FROM products").fetchall()
     conn.close()
     return render_template('admin.html', products=prods)
+
+@app.route('/add', methods=['POST'])
+def add_product():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    main_product = request.form['main_product']
+    option = request.form['option']
+    description = request.form['description']
+    mrp = request.form['mrp']
+    category = request.form['category']
+
+    file = request.files['image']
+    if file and file.filename:
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(UPLOAD, filename)
+        image = Image.open(file)
+        image.save(filepath, optimize=True, quality=60)
+    else:
+        filename = None
+
+    conn = sqlite3.connect('products.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
+              (main_product, option, filename, description, mrp, category))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for('admin'))
 
 @app.route('/logout')
 def logout():
