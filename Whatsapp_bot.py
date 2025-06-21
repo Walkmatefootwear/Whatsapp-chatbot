@@ -13,7 +13,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = '/static/Images'  # Persistent disk path
+UPLOAD = 'static/Images'  # Persistent disk path
 
 if not os.path.exists(UPLOAD):
     os.makedirs(UPLOAD)
@@ -21,7 +21,7 @@ if not os.path.exists(UPLOAD):
 @app.route('/init-upload', methods=['GET'])
 def upload_images_to_disk():
     local_path = 'static/images'            # GitHub images folder
-    render_disk_path = '/static/Images'     # Render disk mount path
+    render_disk_path = 'static/Images'      # Render disk mount path
 
     try:
         count = 0
@@ -286,6 +286,24 @@ def send_image(to, path, caption):
             }
         }
     )
+
+@app.route('/browse-images')
+def browse_images():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    folder = UPLOAD  # static/Images
+    if not os.path.exists(folder):
+        return "Image folder not found."
+
+    files = os.listdir(folder)
+    html = "<h2>\ud83d\udcc2 static/Images</h2><ul style='list-style:none;'>"
+    for f in files:
+        file_url = url_for('static', filename=f'Images/{f}')
+        html += f"<li><a href='{file_url}' target='_blank'><img src='{file_url}' width='100' style='margin:10px;'> {f}</a></li>"
+    html += "</ul>"
+
+    return html
 
 if __name__ == '__main__':
     init_db()
