@@ -256,6 +256,18 @@ def add_product():
 
     return redirect(url_for('admin'))
 
+@app.route('/delete/<int:id>', methods=['POST'])
+def delete_product(id):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    conn = sqlite3.connect('products.db')
+    conn.execute("DELETE FROM products WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for('admin'))
+
 @app.route('/logout')
 def logout():
     session.clear()
