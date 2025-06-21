@@ -202,18 +202,37 @@ def send_image(to, path, caption):
         }
     )
 
-# ✅ New HTML routes
+# -------- HTML and UI Routes --------
+
 @app.route('/')
 def home():
     return redirect('/login')
 
-@app.route('/login')
+@app.route('/login', methods=['GET', 'POST'])
 def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username == 'Walkmate' and password == 'Export@2025':
+            session['user'] = username
+            return redirect(url_for('admin'))
+        else:
+            return render_template('login.html', error='Invalid credentials')
     return render_template('login.html')
 
 @app.route('/admin')
 def admin():
-    return render_template('admin.html')
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    conn = sqlite3.connect('products.db')
+    prods = conn.execute("SELECT * FROM products").fetchall()
+    conn.close()
+    return render_template('admin.html', products=prods)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 if __name__ == '__main__':
     init_db()
