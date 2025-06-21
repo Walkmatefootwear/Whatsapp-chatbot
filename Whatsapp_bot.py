@@ -202,6 +202,19 @@ def send_image(to, path, caption):
         }
     )
 
+# ✅ New HTML routes
+@app.route('/')
+def home():
+    return redirect('/login')
+
+@app.route('/login')
+def login():
+    return render_template('login.html')
+
+@app.route('/admin')
+def admin():
+    return render_template('admin.html')
+
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
