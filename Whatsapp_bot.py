@@ -20,14 +20,14 @@ cloudinary.config(
     api_secret=os.getenv('CLOUDINARY_API_SECRET')
 )
 
-# WhatsApp API credentials
+# WhatsApp API Credentials
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
-PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
+PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '707899462402999')  # fallback
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
 
-# Initialize DB
+# Initialize the database
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -49,7 +49,6 @@ def init_db():
 def index():
     return redirect(url_for('login'))
 
-# ------------------- Webhook -------------------
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -58,24 +57,26 @@ def webhook():
         return "Verification token mismatch", 403
 
     if request.method == 'POST':
-        data = request.get_json()
         try:
+            data = request.get_json()
+            print("\n✅ Incoming Webhook:", data)
+
             entry = data['entry'][0]
             changes = entry['changes'][0]
             value = changes['value']
             messages = value.get('messages')
             if not messages:
+                print("⚠️ No message found in payload")
                 return "No message", 200
 
             msg = messages[0]
             from_number = msg['from']
-            raw_body = msg['text']['body']
+            print(f"📩 Message from {from_number}: {msg}")
 
-            try:
-                user_msg = raw_body.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
-            except Exception as e:
-                print("❌ Unicode decode error:", e)
-                user_msg = ""
+            user_msg = msg.get('text', {}).get('body', '').strip().lower()
+            if not user_msg:
+                print("⚠️ Non-text message or missing body:", msg)
+                return "No text", 200
 
             state = user_states.get(from_number)
 
@@ -129,8 +130,8 @@ def webhook():
             print("❌ Webhook error:", e)
             return "Error", 500
 
-# ------------------- WhatsApp Send -------------------
 def send_text(to, msg):
+    print(f"➡️ Sending text to {to}: {msg}")
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
         "messaging_product": "whatsapp",
@@ -141,9 +142,11 @@ def send_text(to, msg):
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    requests.post(url, json=payload, headers=headers)
+    response = requests.post(url, json=payload, headers=headers)
+    print("⬅️ Text send status:", response.status_code, response.text)
 
 def send_image(to, image_url, caption):
+    print(f"➡️ Uploading image for {to}: {image_url}")
     response = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
@@ -155,6 +158,7 @@ def send_image(to, image_url, caption):
         send_text(to, f"❌ Image upload failed: {response.text}")
         return
 
+    print(f"📸 Sending image ID {media_id} to {to}")
     requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},
@@ -166,7 +170,6 @@ def send_image(to, image_url, caption):
         }
     )
 
-# ------------------- Admin Panel -------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -230,7 +233,6 @@ def delete_product(id):
     conn.close()
     return redirect(url_for('admin'))
 
-# ------------------- Run -------------------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
