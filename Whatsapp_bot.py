@@ -1,28 +1,35 @@
 import os
 import sqlite3
-import mimetypes
 import requests
-import shutil
-from flask import Flask, request, render_template, redirect, url_for, session, send_from_directory
+from flask import Flask, request, render_template, redirect, url_for, session
 from werkzeug.utils import secure_filename
-from PIL import Image
 from dotenv import load_dotenv
+import cloudinary
+import cloudinary.uploader
 
+# Load environment variables
 load_dotenv()
 
+# Flask app
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
-UPLOAD = 'static/Images'
-LOCAL_IMAGE_PATH = 'static/images'
 
-if not os.path.exists(UPLOAD):
-    os.makedirs(UPLOAD)
+# Cloudinary config
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.getenv('CLOUDINARY_API_KEY'),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET')
+)
 
+# WhatsApp API
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
-PHONE_ID = os.getenv('WHATSAPP_PHONE_ID', '639181935952703')
+PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
+
+# Runtime user state
 user_states = {}
 
+# Initialize DB
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -40,14 +47,13 @@ def init_db():
     conn.commit()
     conn.close()
 
+# ------------------- WhatsApp Webhook -------------------
+
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
-        mode = request.args.get("hub.mode")
-        token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
-        if mode == "subscribe" and token == VERIFY_TOKEN:
-            return challenge, 200
+        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge"), 200
         return "Verification token mismatch", 403
 
     if request.method == 'POST':
@@ -65,7 +71,7 @@ def webhook():
             user_msg = msg['text']['body'].strip().lower()
             state = user_states.get(from_number)
 
-            if user_msg in ('hi', 'hello', 'menu', 'start') or user_msg == '1':
+            if user_msg in ('hi', 'hello', 'menu', '1'):
                 reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
                 user_states[from_number] = 'awaiting_option'
                 send_text(from_number, reply)
@@ -77,8 +83,7 @@ def webhook():
                     row = conn.execute("SELECT image, description FROM products WHERE category = 'catalogue' LIMIT 1").fetchone()
                     conn.close()
                     if row:
-                        image_name, caption = row
-                        send_image_logic(from_number, image_name, caption)
+                        send_image(from_number, row[0], row[1])
                     else:
                         send_text(from_number, "No catalogue available.")
                     user_states.pop(from_number, None)
@@ -103,8 +108,8 @@ def webhook():
                     send_text(from_number, "❌ No matching product found.")
                     return "No matches", 200
 
-                for image_name, caption in rows:
-                    send_image_logic(from_number, image_name, caption)
+                for image_url, caption in rows:
+                    send_image(from_number, image_url, caption)
 
                 send_text(from_number, "✅ Done. Type another name or 1 to go back.")
                 return "Product images sent", 200
@@ -115,7 +120,8 @@ def webhook():
         except Exception as e:
             print("Webhook error:", e)
             return "Error", 500
-    return "Webhook received", 200
+
+# ------------------- WhatsApp Messaging -------------------
 
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -130,29 +136,17 @@ def send_text(to, msg):
     }
     requests.post(url, json=payload, headers=headers)
 
-def send_image_logic(to, image_name, caption):
-    image_path = os.path.join(UPLOAD, image_name)
-    if not os.path.exists(image_path):
-        fallback_path = os.path.join(LOCAL_IMAGE_PATH, image_name)
-        if os.path.exists(fallback_path):
-            shutil.copy(fallback_path, image_path)
-
-    if not os.path.exists(image_path):
-        send_text(to, f"❌ Image not found: {image_name}")
-        return
-
-    mime, _ = mimetypes.guess_type(image_path)
-    with open(image_path, 'rb') as f:
-        response = requests.post(
-            f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
-            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
-            files={"file": (image_name, f, mime)},
-            data={"messaging_product": "whatsapp"}
-        )
+def send_image(to, image_url, caption):
+    # Upload image URL to WhatsApp media
+    response = requests.post(
+        f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+        data={"messaging_product": "whatsapp", "type": "image", "url": image_url}
+    )
 
     media_id = response.json().get("id")
     if not media_id:
-        send_text(to, f"❌ Failed to upload image: {response.text}")
+        send_text(to, f"❌ Image upload failed: {response.text}")
         return
 
     requests.post(
@@ -166,21 +160,21 @@ def send_image_logic(to, image_name, caption):
         }
     )
 
-@app.route('/')
-def home():
-    return redirect('/login')
+# ------------------- Admin Panel -------------------
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if username == 'Walkmate' and password == 'Export@2025':
-            session['user'] = username
+        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
+            session['user'] = 'Walkmate'
             return redirect(url_for('admin'))
-        else:
-            return render_template('login.html', error='Invalid credentials')
+        return render_template('login.html', error='Invalid credentials')
     return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 @app.route('/admin')
 def admin():
@@ -196,45 +190,35 @@ def add_product():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    main_product = request.form['main_product'].strip()
+    main_product = request.form['main_product'].strip().lower()
     option = request.form['option'].strip()
     description = request.form['description'].strip()
     mrp = request.form['mrp'].strip()
     category = request.form['category'].strip()
-
     file = request.files['image']
+
+    image_url = None
     if file and file.filename:
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(UPLOAD, filename)
-        image = Image.open(file)
-        image.save(filepath, optimize=True, quality=60)
-    else:
-        filename = None
+        upload_result = cloudinary.uploader.upload(file, folder="walkmate")
+        image_url = upload_result.get('secure_url')
 
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
     c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-              (main_product.lower(), option, filename, description, mrp, category))
+              (main_product, option, image_url, description, mrp, category))
     conn.commit()
     conn.close()
-
     return redirect(url_for('admin'))
 
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_product(id):
     if 'user' not in session:
         return redirect(url_for('login'))
-
     conn = sqlite3.connect('products.db')
     conn.execute("DELETE FROM products WHERE id = ?", (id,))
     conn.commit()
     conn.close()
     return redirect(url_for('admin'))
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
 
 if __name__ == '__main__':
     init_db()
