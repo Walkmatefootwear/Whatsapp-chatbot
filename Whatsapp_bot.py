@@ -7,27 +7,23 @@ from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 
-# Cloudinary configuration
 cloudinary.config(
     cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
     api_key=os.getenv('CLOUDINARY_API_KEY'),
     api_secret=os.getenv('CLOUDINARY_API_SECRET')
 )
 
-# WhatsApp API credentials
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
 
-# Initialize DB
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -49,7 +45,6 @@ def init_db():
 def index():
     return redirect(url_for('login'))
 
-# ------------------- Webhook -------------------
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -59,20 +54,20 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("\n✅ Incoming Webhook:", data)
+        print("✅ Incoming Webhook:", data)
+
         try:
             entry = data['entry'][0]
             changes = entry['changes'][0]
             value = changes['value']
-            messages = value.get('messages')
 
+            # Skip delivery status events
+            if 'statuses' in value:
+                return "Status received", 200
+
+            messages = value.get('messages')
             if not messages:
-                # Attempt re-engagement if status update received
-                status = value.get('statuses', [{}])[0]
-                recipient_id = status.get('recipient_id')
-                if recipient_id:
-                    send_template(recipient_id)
-                    return "Template message sent", 200
+                print("⚠️ No message found in payload")
                 return "No message", 200
 
             msg = messages[0]
@@ -87,57 +82,31 @@ def webhook():
 
             state = user_states.get(from_number)
 
-            if user_msg in ('hi', 'hello', 'menu', '1'):
-                reply = "Please choose an option:\n1. View Catalogue\n2. View Product"
+            if user_msg in ('hi', 'hello'):
+                send_template_message(from_number)
                 user_states[from_number] = 'awaiting_option'
-                send_text(from_number, reply)
-                return "Menu sent", 200
+                return "Template sent", 200
 
-            if state == 'awaiting_option':
-                if user_msg == '1':
-                    conn = sqlite3.connect('products.db')
-                    row = conn.execute("SELECT image, description FROM products WHERE category = 'catalogue' LIMIT 1").fetchone()
-                    conn.close()
-                    if row:
-                        send_image(from_number, row[0], row[1])
-                    else:
-                        send_text(from_number, "No catalogue available.")
-                    user_states.pop(from_number, None)
-                    return "Catalogue sent", 200
-
-                elif user_msg == '2':
-                    send_text(from_number, "Please enter the product name (e.g., 2005).")
-                    user_states[from_number] = 'awaiting_article'
-                    return "Asking for product name", 200
-                else:
-                    send_text(from_number, "Invalid option. Reply 1 or 2.")
-                    return "Invalid option", 200
-
-            if state == 'awaiting_article':
+            if user_msg == '2' and state == 'awaiting_option':
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
-                c.execute("SELECT image, description FROM products WHERE lower(main_product) = ?", (user_msg,))
-                rows = c.fetchall()
+                c.execute("SELECT image, description FROM products WHERE category = 'catalogue' LIMIT 1")
+                row = c.fetchone()
                 conn.close()
+                if row:
+                    send_image(from_number, row[0], row[1])
+                else:
+                    send_text(from_number, "No catalogue found.")
+                user_states.pop(from_number, None)
+                return "Catalogue sent", 200
 
-                if not rows:
-                    send_text(from_number, "❌ No matching product found.")
-                    return "No matches", 200
-
-                for image_url, caption in rows:
-                    send_image(from_number, image_url, caption)
-
-                send_text(from_number, "✅ Done. Type another name or 1 to go back.")
-                return "Product images sent", 200
-
-            send_text(from_number, "❌ Unrecognized input. Type 'menu' to restart.")
-            return "Unhandled message", 200
+            send_text(from_number, "Unrecognized. Type 'hi' to start.")
+            return "Fallback message sent", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
             return "Error", 500
 
-# ------------------- WhatsApp Send -------------------
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -149,7 +118,8 @@ def send_text(to, msg):
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    requests.post(url, json=payload, headers=headers)
+    res = requests.post(url, json=payload, headers=headers)
+    print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
     response = requests.post(
@@ -174,25 +144,24 @@ def send_image(to, image_url, caption):
         }
     )
 
-def send_template(to, template_name="walkmate_greeting"):
+def send_template_message(to):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "template",
         "template": {
-            "name": template_name,
-            "language": {"code": "en"}
+            "name": "walkmate_greeting",
+            "language": {"code": "en_US"}
         }
     }
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    response = requests.post(url, json=payload, headers=headers)
-    print("📨 Template sent:", response.status_code, response.text)
+    res = requests.post(url, json=payload, headers=headers)
+    print("📨 Template sent:", res.status_code, res.text)
 
-# ------------------- Admin Panel -------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -235,9 +204,8 @@ def add_product():
             image_url = upload_result.get('secure_url')
 
         conn = sqlite3.connect('products.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-                  (main_product, option, image_url, description, mrp, category))
+        conn.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
+                     (main_product, option, image_url, description, mrp, category))
         conn.commit()
         conn.close()
         return redirect(url_for('admin'))
@@ -256,7 +224,6 @@ def delete_product(id):
     conn.close()
     return redirect(url_for('admin'))
 
-# ------------------- Run -------------------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
