@@ -13,20 +13,21 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 
-# Cloudinary config
+# Cloudinary configuration
 cloudinary.config(
     cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
     api_key=os.getenv('CLOUDINARY_API_KEY'),
     api_secret=os.getenv('CLOUDINARY_API_SECRET')
 )
 
-# WhatsApp API
+# WhatsApp API Credentials
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
 
+# Initialize the database
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -45,7 +46,7 @@ def init_db():
     conn.close()
 
 @app.route('/')
-def home():
+def index():
     return redirect(url_for('login'))
 
 @app.route('/webhook', methods=['GET', 'POST'])
@@ -184,25 +185,30 @@ def add_product():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    main_product = request.form['main_product'].strip().lower()
-    option = request.form['option'].strip()
-    description = request.form['description'].strip()
-    mrp = request.form['mrp'].strip()
-    category = request.form['category'].strip()
-    file = request.files['image']
+    try:
+        main_product = request.form['main_product'].strip().lower()
+        option = request.form['option'].strip()
+        description = request.form['description'].strip()
+        mrp = request.form['mrp'].strip()
+        category = request.form['category'].strip()
+        file = request.files['image']
 
-    image_url = None
-    if file and file.filename:
-        upload_result = cloudinary.uploader.upload(file, folder="walkmate")
-        image_url = upload_result.get('secure_url')
+        image_url = None
+        if file and file.filename:
+            upload_result = cloudinary.uploader.upload(file, folder="walkmate")
+            image_url = upload_result.get('secure_url')
 
-    conn = sqlite3.connect('products.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-              (main_product, option, image_url, description, mrp, category))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('admin'))
+        conn = sqlite3.connect('products.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
+                  (main_product, option, image_url, description, mrp, category))
+        conn.commit()
+        conn.close()
+        return redirect(url_for('admin'))
+
+    except Exception as e:
+        print("\u274c ERROR in /add:", e)
+        return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_product(id):
