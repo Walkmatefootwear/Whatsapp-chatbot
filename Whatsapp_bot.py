@@ -137,7 +137,7 @@ def webhook():
 
             msg = messages[0]
             from_number = msg['from']
-            user_msg = msg.get('text', {}).get('body', '').strip().lower()
+            user_msg = msg['text']['body'].encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
 
             print("\ud83d\udce8 Message from:", from_number)
             print("\ud83d\udcec Text:", user_msg)
