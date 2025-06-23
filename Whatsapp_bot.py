@@ -7,27 +7,27 @@ from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
 
-# Load .env variables
+# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 
-# Cloudinary Configuration
+# Cloudinary configuration
 cloudinary.config(
     cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
     api_key=os.getenv('CLOUDINARY_API_KEY'),
     api_secret=os.getenv('CLOUDINARY_API_SECRET')
 )
 
-# WhatsApp API Configuration
+# WhatsApp API credentials
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
 
-# ------------------------ DB ------------------------
+# Initialize DB
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -45,75 +45,11 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ---------------------- Routes ----------------------
 @app.route('/')
 def index():
     return redirect(url_for('login'))
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
-            session['user'] = 'Walkmate'
-            return redirect(url_for('admin'))
-        return render_template('login.html', error='Invalid credentials')
-    return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-@app.route('/admin')
-def admin():
-    if 'user' not in session:
-        return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
-    prods = conn.execute("SELECT * FROM products").fetchall()
-    conn.close()
-    return render_template('admin.html', products=prods)
-
-@app.route('/add', methods=['POST'])
-def add_product():
-    if 'user' not in session:
-        return redirect(url_for('login'))
-
-    try:
-        main_product = request.form['main_product'].strip().lower()
-        option = request.form['option'].strip()
-        description = request.form['description'].strip()
-        mrp = request.form['mrp'].strip()
-        category = request.form['category'].strip()
-        file = request.files['image']
-
-        image_url = None
-        if file and file.filename:
-            upload_result = cloudinary.uploader.upload(file, folder="walkmate")
-            image_url = upload_result.get('secure_url')
-
-        conn = sqlite3.connect('products.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-                  (main_product, option, image_url, description, mrp, category))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('admin'))
-
-    except Exception as e:
-        print("\u274c ERROR in /add:", e)
-        return "Internal Server Error", 500
-
-@app.route('/delete/<int:id>', methods=['POST'])
-def delete_product(id):
-    if 'user' not in session:
-        return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
-    conn.execute("DELETE FROM products WHERE id = ?", (id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('admin'))
-
-# ---------------------- Webhook ----------------------
+# ------------------- Webhook -------------------
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -124,27 +60,22 @@ def webhook():
     if request.method == 'POST':
         data = request.get_json()
         try:
-            print("\ud83d\udd14 Webhook received:", data)
-
             entry = data['entry'][0]
             changes = entry['changes'][0]
             value = changes['value']
             messages = value.get('messages')
-
             if not messages:
-                print("\ud83d\udcec No messages in payload.")
                 return "No message", 200
 
             msg = messages[0]
             from_number = msg['from']
-            user_msg = msg['text']['body'].encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
+            raw_body = msg['text']['body']
 
-            print("\ud83d\udce8 Message from:", from_number)
-            print("\ud83d\udcec Text:", user_msg)
-
-            if not user_msg:
-                send_text(from_number, "❌ Sorry, I only understand text messages.")
-                return "Non-text message", 200
+            try:
+                user_msg = raw_body.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
+            except Exception as e:
+                print("❌ Unicode decode error:", e)
+                user_msg = ""
 
             state = user_states.get(from_number)
 
@@ -198,7 +129,7 @@ def webhook():
             print("❌ Webhook error:", e)
             return "Error", 500
 
-# -------------------- WhatsApp Send --------------------
+# ------------------- WhatsApp Send -------------------
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -235,7 +166,71 @@ def send_image(to, image_url, caption):
         }
     )
 
-# ---------------------- Run App ----------------------
+# ------------------- Admin Panel -------------------
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
+            session['user'] = 'Walkmate'
+            return redirect(url_for('admin'))
+        return render_template('login.html', error='Invalid credentials')
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+@app.route('/admin')
+def admin():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    conn = sqlite3.connect('products.db')
+    prods = conn.execute("SELECT * FROM products").fetchall()
+    conn.close()
+    return render_template('admin.html', products=prods)
+
+@app.route('/add', methods=['POST'])
+def add_product():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    try:
+        main_product = request.form['main_product'].strip().lower()
+        option = request.form['option'].strip()
+        description = request.form['description'].strip()
+        mrp = request.form['mrp'].strip()
+        category = request.form['category'].strip()
+        file = request.files['image']
+
+        image_url = None
+        if file and file.filename:
+            upload_result = cloudinary.uploader.upload(file, folder="walkmate")
+            image_url = upload_result.get('secure_url')
+
+        conn = sqlite3.connect('products.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
+                  (main_product, option, image_url, description, mrp, category))
+        conn.commit()
+        conn.close()
+        return redirect(url_for('admin'))
+
+    except Exception as e:
+        print("❌ ERROR in /add:", e)
+        return "Internal Server Error", 500
+
+@app.route('/delete/<int:id>', methods=['POST'])
+def delete_product(id):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    conn = sqlite3.connect('products.db')
+    conn.execute("DELETE FROM products WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin'))
+
+# ------------------- Run -------------------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
