@@ -10,7 +10,6 @@ import cloudinary.uploader
 # Load environment variables
 load_dotenv()
 
-# Flask app
 app = Flask(__name__)
 app.secret_key = 'walkmate-secret-key'
 
@@ -26,10 +25,8 @@ ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
-# Runtime user state
 user_states = {}
 
-# Initialize DB
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -47,7 +44,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ------------------- WhatsApp Webhook -------------------
+@app.route('/')
+def home():
+    return redirect(url_for('login'))
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
@@ -121,8 +120,6 @@ def webhook():
             print("Webhook error:", e)
             return "Error", 500
 
-# ------------------- WhatsApp Messaging -------------------
-
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -137,7 +134,6 @@ def send_text(to, msg):
     requests.post(url, json=payload, headers=headers)
 
 def send_image(to, image_url, caption):
-    # Upload image URL to WhatsApp media
     response = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
@@ -159,8 +155,6 @@ def send_image(to, image_url, caption):
             "image": {"id": media_id, "caption": caption}
         }
     )
-
-# ------------------- Admin Panel -------------------
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
