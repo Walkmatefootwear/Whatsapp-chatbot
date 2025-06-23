@@ -20,13 +20,14 @@ cloudinary.config(
     api_secret=os.getenv('CLOUDINARY_API_SECRET')
 )
 
+# WhatsApp API credentials
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
-VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'Walkmate2025')
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
 
-# Initialize the database
+# Initialize DB
 def init_db():
     conn = sqlite3.connect('products.db')
     c = conn.cursor()
@@ -48,6 +49,7 @@ def init_db():
 def index():
     return redirect(url_for('login'))
 
+# ------------------- Webhook -------------------
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -57,15 +59,20 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("\n\u2705 Incoming Webhook:", data)
-
+        print("\n✅ Incoming Webhook:", data)
         try:
             entry = data['entry'][0]
             changes = entry['changes'][0]
             value = changes['value']
             messages = value.get('messages')
+
             if not messages:
-                print("\u26A0\uFE0F No message found in payload")
+                # Attempt re-engagement if status update received
+                status = value.get('statuses', [{}])[0]
+                recipient_id = status.get('recipient_id')
+                if recipient_id:
+                    send_template(recipient_id)
+                    return "Template message sent", 200
                 return "No message", 200
 
             msg = messages[0]
@@ -75,7 +82,7 @@ def webhook():
             try:
                 user_msg = raw_body.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
             except Exception as e:
-                print("\u274C Unicode decode error:", e)
+                print("❌ Unicode decode error:", e)
                 user_msg = ""
 
             state = user_states.get(from_number)
@@ -114,22 +121,23 @@ def webhook():
                 conn.close()
 
                 if not rows:
-                    send_text(from_number, "\u274C No matching product found.")
+                    send_text(from_number, "❌ No matching product found.")
                     return "No matches", 200
 
                 for image_url, caption in rows:
                     send_image(from_number, image_url, caption)
 
-                send_text(from_number, "\u2705 Done. Type another name or 1 to go back.")
+                send_text(from_number, "✅ Done. Type another name or 1 to go back.")
                 return "Product images sent", 200
 
-            send_text(from_number, "\u274C Unrecognized input. Type 'menu' to restart.")
+            send_text(from_number, "❌ Unrecognized input. Type 'menu' to restart.")
             return "Unhandled message", 200
 
         except Exception as e:
-            print("\u274C Webhook error:", e)
+            print("❌ Webhook error:", e)
             return "Error", 500
 
+# ------------------- WhatsApp Send -------------------
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -141,8 +149,7 @@ def send_text(to, msg):
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    r = requests.post(url, json=payload, headers=headers)
-    print("Text sent:", r.status_code, r.text)
+    requests.post(url, json=payload, headers=headers)
 
 def send_image(to, image_url, caption):
     response = requests.post(
@@ -153,10 +160,10 @@ def send_image(to, image_url, caption):
 
     media_id = response.json().get("id")
     if not media_id:
-        send_text(to, f"\u274C Image upload failed: {response.text}")
+        send_text(to, f"❌ Image upload failed: {response.text}")
         return
 
-    r = requests.post(
+    requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},
         json={
@@ -166,8 +173,26 @@ def send_image(to, image_url, caption):
             "image": {"id": media_id, "caption": caption}
         }
     )
-    print("Image sent:", r.status_code, r.text)
 
+def send_template(to, template_name="walkmate_greeting"):
+    url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": "en"}
+        }
+    }
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    response = requests.post(url, json=payload, headers=headers)
+    print("📨 Template sent:", response.status_code, response.text)
+
+# ------------------- Admin Panel -------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -218,7 +243,7 @@ def add_product():
         return redirect(url_for('admin'))
 
     except Exception as e:
-        print("\u274C ERROR in /add:", e)
+        print("❌ ERROR in /add:", e)
         return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
@@ -231,6 +256,7 @@ def delete_product(id):
     conn.close()
     return redirect(url_for('admin'))
 
+# ------------------- Run -------------------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
