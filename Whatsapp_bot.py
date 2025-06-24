@@ -1,3 +1,4 @@
+
 import os
 import sqlite3
 import requests
@@ -11,6 +12,10 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = "walkmate-secret-key"
 
+# Persistent database path for Render
+DB_PATH = "/data/products.db"
+os.makedirs("/data", exist_ok=True)
+
 # Cloudinary config
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
@@ -18,17 +23,11 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
-# WhatsApp credentials
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
-# ✅ Persistent path for database
-DB_PATH = '/data/products.db'
 
-# =========================
-# 📦 Database Initialization
-# =========================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -52,7 +51,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()  # ✅ Ensure tables are created on every run
 
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
@@ -62,12 +60,14 @@ def get_user_state(user_id):
     conn.close()
     return result[0] if result else None
 
+
 def set_user_state(user_id, state):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("REPLACE INTO user_state (user_id, state) VALUES (?, ?)", (user_id, state))
     conn.commit()
     conn.close()
+
 
 def clear_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
@@ -76,9 +76,7 @@ def clear_user_state(user_id):
     conn.commit()
     conn.close()
 
-# =========================
-# 🔔 WhatsApp Webhook
-# =========================
+
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -112,19 +110,17 @@ def webhook():
 
             current_state = get_user_state(from_number)
 
-            # Greeting state
             if user_input in ["hi", "hello"]:
-                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
-                set_user_state(from_number, "awaiting_option")
-                return "Greeting sent", 200
+                if current_state != "awaiting_option":
+                    send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
+                    set_user_state(from_number, "awaiting_option")
+                return "Greeting handled", 200
 
-            # Ask for article number
             if user_input == "2" and current_state == "awaiting_option":
                 send_text(from_number, "Please enter the article number (e.g., 2205)")
                 set_user_state(from_number, "awaiting_article")
-                return "Asked for article number", 200
+                return "Asked for article", 200
 
-            # Send matching products
             if current_state == "awaiting_article":
                 article = user_input
                 conn = sqlite3.connect(DB_PATH)
@@ -141,7 +137,6 @@ def webhook():
                 clear_user_state(from_number)
                 return "Products sent", 200
 
-            # Fallback
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
             return "Fallback sent", 200
 
@@ -149,9 +144,7 @@ def webhook():
             print("❌ Webhook error:", e)
             return "Error", 500
 
-# =========================
-# 📤 WhatsApp Helpers
-# =========================
+
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     headers = {
@@ -165,6 +158,7 @@ def send_text(to, message):
     }
     res = requests.post(url, headers=headers, json=payload)
     print("📨 Text sent:", res.status_code, res.text)
+
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -183,9 +177,7 @@ def send_image(to, image_url, caption):
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
-# =========================
-# 🔐 Admin Panel
-# =========================
+
 @app.route('/')
 def index():
     return redirect(url_for('login'))
@@ -254,8 +246,7 @@ def delete_product(id):
     conn.close()
     return redirect(url_for('admin'))
 
-# =========================
-# 🚀 App Runner
-# =========================
+init_db()
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
