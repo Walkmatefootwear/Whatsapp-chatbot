@@ -22,10 +22,10 @@ ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
 PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
-user_states = {}
-
 DB_PATH = '/data/products.db' if os.path.exists('/data') else 'products.db'
 
+
+# ---------- Database Setup ----------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -40,13 +40,41 @@ def init_db():
             category TEXT
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_state (
+            user_id TEXT PRIMARY KEY,
+            state TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
-@app.route('/')
-def index():
-    return redirect(url_for('login'))
 
+# ---------- Helper Functions ----------
+def get_user_state(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT state FROM user_state WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def set_user_state(user_id, state):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("REPLACE INTO user_state (user_id, state) VALUES (?, ?)", (user_id, state))
+    conn.commit()
+    conn.close()
+
+def clear_user_state(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM user_state WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---------- Webhook ----------
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -56,7 +84,7 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("\u2705 Incoming Webhook:", data)
+        print("✅ Incoming Webhook:", data)
 
         try:
             entry = data['entry'][0]
@@ -68,31 +96,28 @@ def webhook():
             msg = messages[0]
             from_number = msg['from']
 
+            # Message content
             user_msg = ""
             if msg['type'] == 'text':
                 user_msg = msg['text']['body']
             elif msg['type'] == 'button':
                 user_msg = msg['button']['payload']
             else:
-                send_text(from_number, "\u274c Unsupported message type.")
+                send_text(from_number, "❌ Unsupported message type.")
                 return "Unsupported", 200
 
-            try:
-                user_msg = user_msg.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
-            except Exception as e:
-                print("\u274c Unicode decode error:", e)
-                user_msg = ""
+            user_msg = user_msg.strip().lower()
+            state = get_user_state(from_number)
 
-            state = user_states.get(from_number)
-
+            # Chat flow
             if user_msg in ('hi', 'hello'):
-                send_text(from_number, "Hi \ud83d\udc4b, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
-                user_states[from_number] = 'awaiting_2'
+                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
+                set_user_state(from_number, 'awaiting_2')
                 return "Greeting sent", 200
 
-            if user_msg == '2' and state == 'awaiting_2':
+            if user_msg == '2':
                 send_text(from_number, "Please enter the article number (e.g., 2205)")
-                user_states[from_number] = 'awaiting_article'
+                set_user_state(from_number, 'awaiting_article')
                 return "Prompted for article", 200
 
             if state == 'awaiting_article':
@@ -107,17 +132,18 @@ def webhook():
                         send_image(from_number, image_url, desc)
                 else:
                     send_text(from_number, f"No product found with article number '{user_msg}'.")
-
-                user_states.pop(from_number, None)
+                clear_user_state(from_number)
                 return "Product(s) sent", 200
 
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
             return "Fallback sent", 200
 
         except Exception as e:
-            print("\u274c Webhook error:", e)
+            print("❌ Webhook error:", e)
             return "Internal Error", 500
 
+
+# ---------- WhatsApp Senders ----------
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     payload = {
@@ -130,11 +156,11 @@ def send_text(to, msg):
         "Content-Type": "application/json"
     }
     res = requests.post(url, json=payload, headers=headers)
-    print("\ud83d\udce8 Text sent:", res.status_code, res.text)
+    print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
     if not image_url or not image_url.startswith("http"):
-        send_text(to, "\u274c Invalid image URL.")
+        send_text(to, "❌ Invalid image URL.")
         return
 
     upload = requests.post(
@@ -149,21 +175,13 @@ def send_image(to, image_url, caption):
             "url": image_url
         }
     )
-
-    print("\ud83d\udd01 Media upload:", upload.status_code, upload.text)
+    print("🔁 Media upload response:", upload.status_code, upload.text)
     response_data = upload.json()
     media_id = response_data.get("id")
 
     if not media_id:
-        send_text(to, f"\u274c Failed to send image.\n{upload.text}")
+        send_text(to, f"❌ Failed to send image.\n{upload.text}")
         return
-
-    message_payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "image",
-        "image": {"id": media_id, "caption": caption}
-    }
 
     send_res = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
@@ -171,9 +189,20 @@ def send_image(to, image_url, caption):
             "Authorization": f"Bearer {ACCESS_TOKEN}",
             "Content-Type": "application/json"
         },
-        json=message_payload
+        json={
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "image",
+            "image": {"id": media_id, "caption": caption}
+        }
     )
-    print("\ud83d\udce4 Image sent:", send_res.status_code, send_res.text)
+    print("📤 Image sent:", send_res.status_code, send_res.text)
+
+
+# ---------- Admin Panel ----------
+@app.route('/')
+def index():
+    return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -224,7 +253,7 @@ def add_product():
         return redirect(url_for('admin'))
 
     except Exception as e:
-        print("\u274c ERROR in /add:", e)
+        print("❌ ERROR in /add:", e)
         return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
@@ -237,6 +266,8 @@ def delete_product(id):
     conn.close()
     return redirect(url_for('admin'))
 
+
+# ---------- Run App ----------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
