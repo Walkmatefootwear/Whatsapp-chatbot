@@ -24,8 +24,10 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
 
+DB_PATH = '/data/products.db' if os.path.exists('/data') else 'products.db'
+
 def init_db():
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS products (
@@ -54,7 +56,7 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("✅ Incoming Webhook:", data)
+        print("\u2705 Incoming Webhook:", data)
 
         try:
             entry = data['entry'][0]
@@ -66,27 +68,25 @@ def webhook():
             msg = messages[0]
             from_number = msg['from']
 
-            # Handle message types
             user_msg = ""
             if msg['type'] == 'text':
                 user_msg = msg['text']['body']
             elif msg['type'] == 'button':
                 user_msg = msg['button']['payload']
             else:
-                send_text(from_number, "❌ Unsupported message type.")
+                send_text(from_number, "\u274c Unsupported message type.")
                 return "Unsupported", 200
 
-            # Normalize message
             try:
                 user_msg = user_msg.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
             except Exception as e:
-                print("❌ Unicode decode error:", e)
+                print("\u274c Unicode decode error:", e)
                 user_msg = ""
 
             state = user_states.get(from_number)
 
             if user_msg in ('hi', 'hello'):
-                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
+                send_text(from_number, "Hi \ud83d\udc4b, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
                 user_states[from_number] = 'awaiting_2'
                 return "Greeting sent", 200
 
@@ -96,7 +96,7 @@ def webhook():
                 return "Prompted for article", 200
 
             if state == 'awaiting_article':
-                conn = sqlite3.connect('products.db')
+                conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 c.execute("SELECT image, description FROM products WHERE main_product = ?", (user_msg,))
                 rows = c.fetchall()
@@ -111,12 +111,11 @@ def webhook():
                 user_states.pop(from_number, None)
                 return "Product(s) sent", 200
 
-            # Fallback
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
             return "Fallback sent", 200
 
         except Exception as e:
-            print("❌ Webhook error:", e)
+            print("\u274c Webhook error:", e)
             return "Internal Error", 500
 
 def send_text(to, msg):
@@ -131,29 +130,32 @@ def send_text(to, msg):
         "Content-Type": "application/json"
     }
     res = requests.post(url, json=payload, headers=headers)
-    print("📨 Text sent:", res.status_code, res.text)
+    print("\ud83d\udce8 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
     if not image_url or not image_url.startswith("http"):
-        send_text(to, "❌ Invalid image URL.")
+        send_text(to, "\u274c Invalid image URL.")
         return
-
-    media_upload = {
-        "messaging_product": "whatsapp",
-        "type": "image",
-        "url": image_url
-    }
 
     upload = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
-        headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
-        data=media_upload
+        headers={
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "type": "image",
+            "url": image_url
+        }
     )
 
+    print("\ud83d\udd01 Media upload:", upload.status_code, upload.text)
     response_data = upload.json()
     media_id = response_data.get("id")
+
     if not media_id:
-        send_text(to, f"❌ Failed to send image.\n{upload.text}")
+        send_text(to, f"\u274c Failed to send image.\n{upload.text}")
         return
 
     message_payload = {
@@ -165,11 +167,13 @@ def send_image(to, image_url, caption):
 
     send_res = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
-        headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
         json=message_payload
     )
-
-    print("📤 Image sent:", send_res.status_code, send_res.text)
+    print("\ud83d\udce4 Image sent:", send_res.status_code, send_res.text)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -189,7 +193,7 @@ def logout():
 def admin():
     if 'user' not in session:
         return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     prods = conn.execute("SELECT * FROM products").fetchall()
     conn.close()
     return render_template('admin.html', products=prods)
@@ -212,7 +216,7 @@ def add_product():
             upload_result = cloudinary.uploader.upload(file, folder="walkmate")
             image_url = upload_result.get('secure_url')
 
-        conn = sqlite3.connect('products.db')
+        conn = sqlite3.connect(DB_PATH)
         conn.execute("INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
                      (main_product, option, image_url, description, mrp, category))
         conn.commit()
@@ -220,14 +224,14 @@ def add_product():
         return redirect(url_for('admin'))
 
     except Exception as e:
-        print("❌ ERROR in /add:", e)
+        print("\u274c ERROR in /add:", e)
         return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_product(id):
     if 'user' not in session:
         return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("DELETE FROM products WHERE id = ?", (id,))
     conn.commit()
     conn.close()
