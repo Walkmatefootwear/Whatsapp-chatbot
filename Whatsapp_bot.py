@@ -134,31 +134,42 @@ def send_text(to, msg):
     print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
+    if not image_url or not image_url.startswith("http"):
+        send_text(to, "❌ Invalid image URL.")
+        return
+
+    media_upload = {
+        "messaging_product": "whatsapp",
+        "type": "image",
+        "url": image_url
+    }
+
     upload = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
-        data={
-            "messaging_product": "whatsapp",
-            "type": "image",
-            "url": image_url
-        }
+        data=media_upload
     )
 
-    media_id = upload.json().get("id")
+    response_data = upload.json()
+    media_id = response_data.get("id")
     if not media_id:
         send_text(to, f"❌ Failed to send image.\n{upload.text}")
         return
 
-    requests.post(
+    message_payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "image",
+        "image": {"id": media_id, "caption": caption}
+    }
+
+    send_res = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},
-        json={
-            "messaging_product": "whatsapp",
-            "to": to,
-            "type": "image",
-            "image": {"id": media_id, "caption": caption}
-        }
+        json=message_payload
     )
+
+    print("📤 Image sent:", send_res.status_code, send_res.text)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
