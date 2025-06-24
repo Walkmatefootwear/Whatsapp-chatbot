@@ -19,7 +19,7 @@ cloudinary.config(
 )
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
-PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')  # Make sure this matches incoming webhook
+PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
@@ -61,7 +61,6 @@ def webhook():
             changes = entry['changes'][0]
             value = changes['value']
 
-            # Skip delivery or status notifications
             if 'statuses' in value:
                 return "Status received", 200
 
@@ -73,7 +72,7 @@ def webhook():
             msg = messages[0]
             from_number = msg['from']
 
-            # Detect message type and extract content
+            # Handle both text and button types
             user_msg = ""
             msg_type = msg.get('type')
             if msg_type == 'text':
@@ -82,38 +81,38 @@ def webhook():
                 user_msg = msg['button']['payload']
             else:
                 send_text(from_number, "❌ Unsupported message type.")
-                return "Unsupported message type", 200
+                return "Unsupported", 200
 
-            # Normalize message
             try:
                 user_msg = user_msg.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
             except Exception as e:
                 print("❌ Unicode decode error:", e)
                 user_msg = ""
 
-            # State-based response logic
             state = user_states.get(from_number)
 
             if user_msg in ('hi', 'hello'):
-                send_template_message(from_number)
+                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images")
                 user_states[from_number] = 'awaiting_option'
-                return "Template sent", 200
+                return "Welcome message sent", 200
 
             if user_msg == '2' and state == 'awaiting_option':
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
-                c.execute("SELECT image, description FROM products WHERE category = 'catalogue' LIMIT 1")
-                row = c.fetchone()
+                c.execute("SELECT image, description FROM products WHERE category = 'catalogue'")
+                rows = c.fetchall()
                 conn.close()
-                if row:
-                    send_image(from_number, row[0], row[1])
+
+                if rows:
+                    for image_url, description in rows:
+                        send_image(from_number, image_url, description)
                 else:
                     send_text(from_number, "No catalogue found.")
                 user_states.pop(from_number, None)
                 return "Catalogue sent", 200
 
             send_text(from_number, "Unrecognized. Type 'hi' to start.")
-            return "Fallback message sent", 200
+            return "Fallback", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
@@ -134,15 +133,19 @@ def send_text(to, msg):
     print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
-    response = requests.post(
+    upload = requests.post(
         f"https://graph.facebook.com/v19.0/{PHONE_ID}/media",
         headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
-        data={"messaging_product": "whatsapp", "type": "image", "url": image_url}
+        data={
+            "messaging_product": "whatsapp",
+            "type": "image",
+            "url": image_url
+        }
     )
 
-    media_id = response.json().get("id")
+    media_id = upload.json().get("id")
     if not media_id:
-        send_text(to, f"❌ Image upload failed: {response.text}")
+        send_text(to, f"❌ Failed to send image.\n{upload.text}")
         return
 
     requests.post(
@@ -155,24 +158,6 @@ def send_image(to, image_url, caption):
             "image": {"id": media_id, "caption": caption}
         }
     )
-
-def send_template_message(to):
-    url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "template",
-        "template": {
-            "name": "walkmate_greeting",
-            "language": {"code": "en_US"}
-        }
-    }
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    res = requests.post(url, json=payload, headers=headers)
-    print("📨 Template sent:", res.status_code, res.text)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
