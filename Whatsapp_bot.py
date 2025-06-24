@@ -24,8 +24,7 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 DB_PATH = '/data/products.db' if os.path.exists('/data') else 'products.db'
 
-
-# ---------- Database Setup ----------
+# ✅ Ensures DB and tables are always created, even on Render
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -48,6 +47,8 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
+init_db()  # ✅ Always run on startup (not inside __main__)
 
 
 # ---------- Helper Functions ----------
@@ -96,7 +97,6 @@ def webhook():
             msg = messages[0]
             from_number = msg['from']
 
-            # Message content
             user_msg = ""
             if msg['type'] == 'text':
                 user_msg = msg['text']['body']
@@ -109,7 +109,6 @@ def webhook():
             user_msg = user_msg.strip().lower()
             state = get_user_state(from_number)
 
-            # Chat flow
             if user_msg in ('hi', 'hello'):
                 send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
                 set_user_state(from_number, 'awaiting_2')
@@ -267,7 +266,6 @@ def delete_product(id):
     return redirect(url_for('admin'))
 
 
-# ---------- Run App ----------
+# ---------- Only for local debug ----------
 if __name__ == '__main__':
-    init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
