@@ -58,31 +58,25 @@ def webhook():
 
         try:
             entry = data['entry'][0]
-            changes = entry['changes'][0]
-            value = changes['value']
-
-            if 'statuses' in value:
-                return "Status received", 200
-
+            value = entry['changes'][0]['value']
             messages = value.get('messages')
             if not messages:
-                print("⚠️ No message found in payload")
                 return "No message", 200
 
             msg = messages[0]
             from_number = msg['from']
 
-            # Handle both text and button types
+            # Handle message types
             user_msg = ""
-            msg_type = msg.get('type')
-            if msg_type == 'text':
+            if msg['type'] == 'text':
                 user_msg = msg['text']['body']
-            elif msg_type == 'button':
+            elif msg['type'] == 'button':
                 user_msg = msg['button']['payload']
             else:
                 send_text(from_number, "❌ Unsupported message type.")
                 return "Unsupported", 200
 
+            # Normalize message
             try:
                 user_msg = user_msg.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
             except Exception as e:
@@ -92,31 +86,38 @@ def webhook():
             state = user_states.get(from_number)
 
             if user_msg in ('hi', 'hello'):
-                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images")
-                user_states[from_number] = 'awaiting_option'
-                return "Welcome message sent", 200
+                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
+                user_states[from_number] = 'awaiting_2'
+                return "Greeting sent", 200
 
-            if user_msg == '2' and state == 'awaiting_option':
+            if user_msg == '2' and state == 'awaiting_2':
+                send_text(from_number, "Please enter the article number (e.g., 2205)")
+                user_states[from_number] = 'awaiting_article'
+                return "Prompted for article", 200
+
+            if state == 'awaiting_article':
                 conn = sqlite3.connect('products.db')
                 c = conn.cursor()
-                c.execute("SELECT image, description FROM products WHERE category = 'catalogue'")
+                c.execute("SELECT image, description FROM products WHERE main_product = ?", (user_msg,))
                 rows = c.fetchall()
                 conn.close()
 
                 if rows:
-                    for image_url, description in rows:
-                        send_image(from_number, image_url, description)
+                    for image_url, desc in rows:
+                        send_image(from_number, image_url, desc)
                 else:
-                    send_text(from_number, "No catalogue found.")
-                user_states.pop(from_number, None)
-                return "Catalogue sent", 200
+                    send_text(from_number, f"No product found with article number '{user_msg}'.")
 
-            send_text(from_number, "Unrecognized. Type 'hi' to start.")
-            return "Fallback", 200
+                user_states.pop(from_number, None)
+                return "Product(s) sent", 200
+
+            # Fallback
+            send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
+            return "Fallback sent", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
-            return "Error", 500
+            return "Internal Error", 500
 
 def send_text(to, msg):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
