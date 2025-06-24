@@ -23,12 +23,14 @@ ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
+# ✅ Persistent path for database
+DB_PATH = '/data/products.db'
 
 # =========================
 # 📦 Database Initialization
 # =========================
 def init_db():
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS products (
@@ -50,31 +52,29 @@ def init_db():
     conn.commit()
     conn.close()
 
+init_db()  # ✅ Ensure tables are created on every run
 
 def get_user_state(user_id):
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT state FROM user_state WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
     return result[0] if result else None
 
-
 def set_user_state(user_id, state):
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("REPLACE INTO user_state (user_id, state) VALUES (?, ?)", (user_id, state))
     conn.commit()
     conn.close()
 
-
 def clear_user_state(user_id):
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM user_state WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-
 
 # =========================
 # 🔔 WhatsApp Webhook
@@ -93,7 +93,6 @@ def webhook():
         try:
             value = data['entry'][0]['changes'][0]['value']
 
-            # Ignore delivery status messages
             if 'statuses' in value:
                 return "Status received", 200
 
@@ -113,22 +112,22 @@ def webhook():
 
             current_state = get_user_state(from_number)
 
-            # State: greeting
+            # Greeting state
             if user_input in ["hi", "hello"]:
                 send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
                 set_user_state(from_number, "awaiting_option")
                 return "Greeting sent", 200
 
-            # State: awaiting article number prompt
+            # Ask for article number
             if user_input == "2" and current_state == "awaiting_option":
                 send_text(from_number, "Please enter the article number (e.g., 2205)")
                 set_user_state(from_number, "awaiting_article")
                 return "Asked for article number", 200
 
-            # State: awaiting article number input
+            # Send matching products
             if current_state == "awaiting_article":
                 article = user_input
-                conn = sqlite3.connect('products.db')
+                conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 c.execute("SELECT image, description FROM products WHERE main_product = ?", (article,))
                 products = c.fetchall()
@@ -150,9 +149,8 @@ def webhook():
             print("❌ Webhook error:", e)
             return "Error", 500
 
-
 # =========================
-# 📤 WhatsApp Send Helpers
+# 📤 WhatsApp Helpers
 # =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -167,7 +165,6 @@ def send_text(to, message):
     }
     res = requests.post(url, headers=headers, json=payload)
     print("📨 Text sent:", res.status_code, res.text)
-
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -186,9 +183,8 @@ def send_image(to, image_url, caption):
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
-
 # =========================
-# 🔐 Admin Panel (Optional)
+# 🔐 Admin Panel
 # =========================
 @app.route('/')
 def index():
@@ -212,7 +208,7 @@ def logout():
 def admin():
     if 'user' not in session:
         return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     prods = conn.execute("SELECT * FROM products").fetchall()
     conn.close()
     return render_template('admin.html', products=prods)
@@ -235,7 +231,7 @@ def add_product():
             upload_result = cloudinary.uploader.upload(file, folder="walkmate")
             image_url = upload_result.get('secure_url')
 
-        conn = sqlite3.connect('products.db')
+        conn = sqlite3.connect(DB_PATH)
         conn.execute(
             "INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
             (main_product, option, image_url, description, mrp, category)
@@ -252,7 +248,7 @@ def add_product():
 def delete_product(id):
     if 'user' not in session:
         return redirect(url_for('login'))
-    conn = sqlite3.connect('products.db')
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("DELETE FROM products WHERE id = ?", (id,))
     conn.commit()
     conn.close()
@@ -262,5 +258,4 @@ def delete_product(id):
 # 🚀 App Runner
 # =========================
 if __name__ == '__main__':
-    init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
