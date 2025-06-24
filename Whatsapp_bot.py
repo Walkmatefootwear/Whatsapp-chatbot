@@ -19,7 +19,7 @@ cloudinary.config(
 )
 
 ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN')
-PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')
+PHONE_ID = os.getenv('WHATSAPP_PHONE_ID')  # Make sure this matches incoming webhook
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
 user_states = {}
@@ -61,7 +61,7 @@ def webhook():
             changes = entry['changes'][0]
             value = changes['value']
 
-            # Skip delivery status events
+            # Skip delivery or status notifications
             if 'statuses' in value:
                 return "Status received", 200
 
@@ -72,14 +72,26 @@ def webhook():
 
             msg = messages[0]
             from_number = msg['from']
-            raw_body = msg['text']['body']
 
+            # Detect message type and extract content
+            user_msg = ""
+            msg_type = msg.get('type')
+            if msg_type == 'text':
+                user_msg = msg['text']['body']
+            elif msg_type == 'button':
+                user_msg = msg['button']['payload']
+            else:
+                send_text(from_number, "❌ Unsupported message type.")
+                return "Unsupported message type", 200
+
+            # Normalize message
             try:
-                user_msg = raw_body.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
+                user_msg = user_msg.encode('utf-16', 'surrogatepass').decode('utf-16').strip().lower()
             except Exception as e:
                 print("❌ Unicode decode error:", e)
                 user_msg = ""
 
+            # State-based response logic
             state = user_states.get(from_number)
 
             if user_msg in ('hi', 'hello'):
