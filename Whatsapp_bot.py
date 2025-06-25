@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import time
 import requests
 import pandas as pd
 from io import BytesIO
@@ -7,7 +8,6 @@ from flask import Flask, request, redirect, url_for, render_template, session, s
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-import time
 
 load_dotenv()
 
@@ -75,17 +75,17 @@ def get_user_state(user_id):
     conn.close()
     if result:
         state, last_updated = result
-        if int(time.time()) - last_updated < 300:  # 5 mins
-            return state
-        else:
+        if time.time() - int(last_updated) > 600:
             clear_user_state(user_id)
+            return None
+        return state
     return None
 
 def set_user_state(user_id, state):
+    now = int(time.time())
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)",
-              (user_id, state, int(time.time())))
+    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)", (user_id, state, now))
     conn.commit()
     conn.close()
 
@@ -148,72 +148,83 @@ def webhook():
 
             mark_message_processed(msg_id)
 
+            user_input = ""
             if msg_type == "text" and "text" in msg:
                 user_input = msg["text"].get("body", "").strip().lower()
+            elif msg_type == "button" and "button" in msg:
+                user_input = msg["button"].get("payload", "").strip().lower()
             else:
                 send_text(from_number, "❌ Unsupported message type.")
-                return "Unsupported", 200
+                return "Unsupported message type", 200
 
-            state = get_user_state(from_number)
-            print("User:", from_number, "State:", state, "Input:", user_input)
+            current_state = get_user_state(from_number)
 
             if user_input in ["hi", "hello"]:
-                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with '2' to get product images.")
+                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
                 set_user_state(from_number, "awaiting_option")
                 return "Greeting sent", 200
 
-            if user_input == "2" and state == "awaiting_option":
+            if user_input == "2" and current_state == "awaiting_option":
                 send_text(from_number, "Please enter the article number (e.g., 2205)")
                 set_user_state(from_number, "awaiting_article")
-                return "Asked for article", 200
+                return "Asked for article number", 200
 
-            if state == "awaiting_article":
+            if current_state == "awaiting_article":
                 article = user_input
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 c.execute("SELECT image, description FROM products WHERE main_product = ?", (article,))
-                results = c.fetchall()
+                products = c.fetchall()
                 conn.close()
 
-                if not results:
-                    send_text(from_number, "❌ No product found with that article number.")
+                if not products:
+                    send_text(from_number, "❌ No product found with article number.")
                 else:
-                    for image_url, desc in results:
-                        send_image(from_number, image_url, desc)
+                    for image_url, description in products:
+                        send_image(from_number, image_url, description)
+
                 clear_user_state(from_number)
                 return "Products sent", 200
 
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
-            return "Fallback", 200
+            return "Fallback sent", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
             return "Error", 500
 
 # =========================
-# 📤 WhatsApp Senders
+# 📤 WhatsApp Helpers
 # =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
-    data = {
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "text",
         "text": {"body": message}
     }
-    requests.post(url, headers=headers, json=data)
+    res = requests.post(url, headers=headers, json=payload)
+    print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
-    data = {
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "image",
         "image": {"link": image_url, "caption": caption}
     }
-    res = requests.post(url, headers=headers, json=data)
+    res = requests.post(url, headers=headers, json=payload)
+    print("📨 Image sent:", res.status_code, res.text)
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
@@ -243,19 +254,24 @@ def admin():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    search = request.args.get('search', '').strip()
+    search_query = request.args.get('search', '').strip()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    if search:
+
+    if search_query:
         c.execute("""
-            SELECT * FROM products WHERE
-            main_product LIKE ? OR option LIKE ? OR description LIKE ? OR category LIKE ?
-        """, (f"%{search}%",)*4)
+            SELECT * FROM products WHERE 
+            main_product LIKE ? OR 
+            option LIKE ? OR 
+            description LIKE ? OR
+            category LIKE ?
+        """, (f"%{search_query}%",)*4)
     else:
         c.execute("SELECT * FROM products")
+
     prods = c.fetchall()
     conn.close()
-    return render_template('admin.html', products=prods, search_query=search)
+    return render_template('admin.html', products=prods, search_query=search_query)
 
 @app.route('/add', methods=['POST'])
 def add_product():
@@ -276,16 +292,16 @@ def add_product():
             image_url = upload_result.get('secure_url')
 
         conn = sqlite3.connect(DB_PATH)
-        conn.execute("""
-            INSERT INTO products (main_product, option, image, description, mrp, category)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (main_product, option, image_url, description, mrp, category))
+        conn.execute(
+            "INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
+            (main_product, option, image_url, description, mrp, category)
+        )
         conn.commit()
         conn.close()
         return redirect(url_for('admin'))
 
     except Exception as e:
-        print("❌ Add product error:", e)
+        print("❌ ERROR in /add:", e)
         return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
@@ -301,23 +317,23 @@ def delete_product(id):
 @app.route('/export_excel')
 def export_excel():
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM products", conn)
+    df = pd.read_sql_query("SELECT id, main_product, option, description, mrp, category FROM products", conn)
     conn.close()
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Products')
-    output.seek(0)
 
+    output.seek(0)
     return send_file(
         output,
-        download_name="walkmate_products.xlsx",
+        download_name='walkmate_products.xlsx',
         as_attachment=True,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
 # =========================
-# 🚀 Run App
+# 🚀 Run the App
 # =========================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
