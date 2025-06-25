@@ -1,5 +1,3 @@
-# walkmate_flask_app.py
-
 import os
 import sqlite3
 import requests
@@ -9,7 +7,6 @@ from flask import Flask, request, redirect, url_for, render_template, session, s
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -28,14 +25,17 @@ ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
-# Database path
+# Persistent path for database
 DB_PATH = '/data/products.db'
 os.makedirs('/data', exist_ok=True)
 
-# ========== Database Setup ==========
+# =========================
+# 📦 Database Initialization
+# =========================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,43 +47,45 @@ def init_db():
             category TEXT
         )
     """)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_state (
             user_id TEXT PRIMARY KEY,
             state TEXT,
-            last_updated TIMESTAMP
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS processed_messages (
             id TEXT PRIMARY KEY
         )
     """)
+
     conn.commit()
     conn.close()
 
 init_db()
 
-# ========== User State ==========
+# =========================
+# 🧠 User State Management
+# =========================
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT state, last_updated FROM user_state WHERE user_id = ?", (user_id,))
+    c.execute("SELECT state FROM user_state WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-    if result:
-        state, last_updated = result
-        if datetime.now() - datetime.fromisoformat(last_updated) > timedelta(minutes=5):
-            clear_user_state(user_id)
-            return None
-        return state
-    return None
+    return result[0] if result else None
 
 def set_user_state(user_id, state):
-    now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)", (user_id, state, now))
+    c.execute("""
+        INSERT INTO user_state (user_id, state, last_updated) 
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET state=excluded.state, last_updated=CURRENT_TIMESTAMP
+    """, (user_id, state))
     conn.commit()
     conn.close()
 
@@ -94,7 +96,9 @@ def clear_user_state(user_id):
     conn.commit()
     conn.close()
 
-# ========== Duplicate Message ==========
+# =========================
+# 🛡️ Duplicate Message Handling
+# =========================
 def is_duplicate_message(msg_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -110,7 +114,9 @@ def mark_message_processed(msg_id):
     conn.commit()
     conn.close()
 
-# ========== WhatsApp Webhook ==========
+# =========================
+# 🔔 WhatsApp Webhook
+# =========================
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -145,9 +151,11 @@ def webhook():
             user_input = ""
             if msg_type == "text" and "text" in msg:
                 user_input = msg["text"].get("body", "").strip().lower()
+            elif msg_type == "button" and "button" in msg:
+                user_input = msg["button"].get("payload", "").strip().lower()
             else:
                 send_text(from_number, "❌ Unsupported message type.")
-                return "Unsupported", 200
+                return "Unsupported message type", 200
 
             current_state = get_user_state(from_number)
 
@@ -159,7 +167,7 @@ def webhook():
             if user_input == "2" and current_state == "awaiting_option":
                 send_text(from_number, "Please enter the article number (e.g., 2205)")
                 set_user_state(from_number, "awaiting_article")
-                return "Ask for article", 200
+                return "Asked for article number", 200
 
             if current_state == "awaiting_article":
                 article = user_input
@@ -170,22 +178,24 @@ def webhook():
                 conn.close()
 
                 if not products:
-                    send_text(from_number, "❌ No product found with this article.")
+                    send_text(from_number, "❌ No product found with article number.")
                 else:
                     for image_url, description in products:
                         send_image(from_number, image_url, description)
 
                 clear_user_state(from_number)
-                return "Product sent", 200
+                return "Products sent", 200
 
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
-            return "Fallback", 200
+            return "Fallback sent", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
             return "Error", 500
 
-# ========== WhatsApp Send Helpers ==========
+# =========================
+# 📄 WhatsApp Helpers
+# =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     headers = {
@@ -198,7 +208,8 @@ def send_text(to, message):
         "type": "text",
         "text": {"body": message}
     }
-    requests.post(url, headers=headers, json=payload)
+    res = requests.post(url, headers=headers, json=payload)
+    print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -213,14 +224,15 @@ def send_image(to, image_url, caption):
         "image": {"link": image_url, "caption": caption}
     }
     res = requests.post(url, headers=headers, json=payload)
+    print("📨 Image sent:", res.status_code, res.text)
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
-# ========== Admin Panel ==========
+# =========================
+# 🔐 Admin Panel
+# =========================
 @app.route('/')
 def index():
-    if 'user' in session:
-        return redirect(url_for('admin'))
     return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -320,8 +332,8 @@ def export_excel():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
-# ========== Run App ==========
+# =========================
+# 🚀 Run the App
+# =========================
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print(f"\U0001F680 Starting server on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
