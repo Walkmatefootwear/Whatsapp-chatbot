@@ -7,7 +7,7 @@ from flask import Flask, request, redirect, url_for, render_template, session, s
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-from datetime import datetime, timedelta
+import time
 
 load_dotenv()
 
@@ -21,13 +21,18 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
+# WhatsApp credentials
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
+
+# Persistent path for database
 DB_PATH = '/data/products.db'
 os.makedirs('/data', exist_ok=True)
 
-# ========== Database Initialization ==========
+# =========================
+# 📦 Database Initialization
+# =========================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -46,7 +51,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS user_state (
             user_id TEXT PRIMARY KEY,
             state TEXT,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            last_updated INTEGER
         )
     """)
     c.execute("""
@@ -59,35 +64,27 @@ def init_db():
 
 init_db()
 
-# ========== User State Management ==========
+# =========================
+# 🧠 User State Management
+# =========================
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT state, last_updated FROM user_state WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-
-    if not result:
-        return None
-
-    state, last_updated_str = result
-    last_updated = datetime.strptime(last_updated_str, "%Y-%m-%d %H:%M:%S")
-    if datetime.now() - last_updated > timedelta(minutes=5):
-        clear_user_state(user_id)
-        return None
-
-    return state
+    if result:
+        state, last_updated = result
+        if time.time() - last_updated > 300:
+            clear_user_state(user_id)
+            return None
+        return state
+    return None
 
 def set_user_state(user_id, state):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO user_state (user_id, state, last_updated)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET
-            state=excluded.state,
-            last_updated=CURRENT_TIMESTAMP
-    """, (user_id, state))
+    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)", (user_id, state, int(time.time())))
     conn.commit()
     conn.close()
 
@@ -98,7 +95,9 @@ def clear_user_state(user_id):
     conn.commit()
     conn.close()
 
-# ========== Duplicate Message Handling ==========
+# =========================
+# 🛡️ Duplicate Message Handling
+# =========================
 def is_duplicate_message(msg_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -114,7 +113,9 @@ def mark_message_processed(msg_id):
     conn.commit()
     conn.close()
 
-# ========== WhatsApp Webhook ==========
+# =========================
+# 🔔 WhatsApp Webhook
+# =========================
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -124,7 +125,7 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("✅ Incoming Webhook:", data)
+        print("\u2705 Incoming Webhook:", data)
 
         try:
             value = data['entry'][0]['changes'][0]['value']
@@ -169,9 +170,9 @@ def webhook():
 
             if current_state == "awaiting_article":
                 if user_input == "1":
-                    send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
-                    set_user_state(from_number, "awaiting_option")
-                    return "Returned to main menu", 200
+                    clear_user_state(from_number)
+                    send_text(from_number, "🔙 Back to main menu. Type 'hi' to start again.")
+                    return "Back to menu", 200
 
                 article = user_input
                 conn = sqlite3.connect(DB_PATH)
@@ -181,12 +182,12 @@ def webhook():
                 conn.close()
 
                 if not products:
-                    send_text(from_number, "❌ No product found with that article number.")
+                    send_text(from_number, "❌ No product found with article number.")
                 else:
                     for image_url, description in products:
                         send_image(from_number, image_url, description)
-                    send_text(from_number, "Reply with another product name to see more or 1 to go back to main menu.")
-
+                    send_text(from_number, "📅 If you want to see another product image, reply product name.\nSend 1 to go back to main menu.")
+                set_user_state(from_number, "awaiting_article")
                 return "Products sent", 200
 
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
@@ -196,7 +197,9 @@ def webhook():
             print("❌ Webhook error:", e)
             return "Error", 500
 
-# ========== WhatsApp Helpers ==========
+# =========================
+# 📤 WhatsApp Helpers
+# =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     headers = {
@@ -229,7 +232,9 @@ def send_image(to, image_url, caption):
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
-# ========== Admin Panel ==========
+# =========================
+# 🔐 Admin Panel
+# =========================
 @app.route('/')
 def index():
     return redirect(url_for('login'))
@@ -331,6 +336,8 @@ def export_excel():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
-# ========== Run App ==========
+# =========================
+# 🚀 Run the App
+# =========================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
