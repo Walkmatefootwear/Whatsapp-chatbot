@@ -1,7 +1,9 @@
 import os
 import sqlite3
 import requests
-from flask import Flask, request, redirect, url_for, render_template, session
+import pandas as pd
+from io import BytesIO
+from flask import Flask, request, redirect, url_for, render_template, session, send_file
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
@@ -288,6 +290,24 @@ def delete_product(id):
     conn.commit()
     conn.close()
     return redirect(url_for('admin'))
+
+@app.route('/export_excel')
+def export_excel():
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query("SELECT id, main_product, option, description, mrp, category FROM products", conn)
+    conn.close()
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Products')
+
+    output.seek(0)
+    return send_file(
+        output,
+        download_name='walkmate_products.xlsx',
+        as_attachment=True,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 # =========================
 # 🚀 Run the App
