@@ -7,6 +7,7 @@ from flask import Flask, request, redirect, url_for, render_template, session, s
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
+import traceback
 import time
 
 load_dotenv()
@@ -75,6 +76,7 @@ def get_user_state(user_id):
     conn.close()
     if result:
         state, last_updated = result
+        # Reset state if inactive for 5 minutes
         if time.time() - last_updated > 300:
             clear_user_state(user_id)
             return None
@@ -125,7 +127,7 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("\u2705 Incoming Webhook:", data)
+        safe_log(data)
 
         try:
             value = data['entry'][0]['changes'][0]['value']
@@ -169,11 +171,6 @@ def webhook():
                 return "Asked for article number", 200
 
             if current_state == "awaiting_article":
-                if user_input == "1":
-                    clear_user_state(from_number)
-                    send_text(from_number, "🔙 Back to main menu. Type 'hi' to start again.")
-                    return "Back to menu", 200
-
                 article = user_input
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
@@ -186,15 +183,23 @@ def webhook():
                 else:
                     for image_url, description in products:
                         send_image(from_number, image_url, description)
-                    send_text(from_number, "📅 If you want to see another product image, reply product name.\nSend 1 to go back to main menu.")
-                set_user_state(from_number, "awaiting_article")
+
+                    send_text(from_number, "Reply with another article number to view more or type '1' to go back to main menu.")
+                    set_user_state(from_number, "awaiting_article")
+
                 return "Products sent", 200
+
+            if user_input == "1":
+                send_text(from_number, "📅 Back to main menu. Type 'hi' to begin again.")
+                clear_user_state(from_number)
+                return "Main menu", 200
 
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
             return "Fallback sent", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
+            traceback.print_exc()
             return "Error", 500
 
 # =========================
@@ -233,111 +238,20 @@ def send_image(to, image_url, caption):
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
 # =========================
-# 🔐 Admin Panel
+# 🔐 Logging Helper
 # =========================
-@app.route('/')
-def index():
-    return redirect(url_for('login'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
-            session['user'] = 'Walkmate'
-            return redirect(url_for('admin'))
-        return render_template('login.html', error='Invalid credentials')
-    return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-@app.route('/admin')
-def admin():
-    if 'user' not in session:
-        return redirect(url_for('login'))
-
-    search_query = request.args.get('search', '').strip()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    if search_query:
-        c.execute("""
-            SELECT * FROM products WHERE 
-            main_product LIKE ? OR 
-            option LIKE ? OR 
-            description LIKE ? OR
-            category LIKE ?
-        """, (f"%{search_query}%",)*4)
-    else:
-        c.execute("SELECT * FROM products")
-
-    prods = c.fetchall()
-    conn.close()
-    return render_template('admin.html', products=prods, search_query=search_query)
-
-@app.route('/add', methods=['POST'])
-def add_product():
-    if 'user' not in session:
-        return redirect(url_for('login'))
-
+def safe_log(data):
     try:
-        main_product = request.form['main_product'].strip().lower()
-        option = request.form['option'].strip()
-        description = request.form['description'].strip()
-        mrp = request.form['mrp'].strip()
-        category = request.form['category'].strip()
-        file = request.files['image']
-
-        image_url = None
-        if file and file.filename:
-            upload_result = cloudinary.uploader.upload(file, folder="walkmate")
-            image_url = upload_result.get('secure_url')
-
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute(
-            "INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-            (main_product, option, image_url, description, mrp, category)
-        )
-        conn.commit()
-        conn.close()
-        return redirect(url_for('admin'))
-
+        value = data['entry'][0]['changes'][0]['value']
+        contact = value['contacts'][0]['wa_id']
+        msg_type = value.get('messages', [{}])[0].get('type', 'unknown')
+        text = value.get('messages', [{}])[0].get('text', {}).get('body', '')
+        print(f"📥 {contact} sent a {msg_type}: {text}")
     except Exception as e:
-        print("❌ ERROR in /add:", e)
-        return "Internal Server Error", 500
-
-@app.route('/delete/<int:id>', methods=['POST'])
-def delete_product(id):
-    if 'user' not in session:
-        return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM products WHERE id = ?", (id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('admin'))
-
-@app.route('/export_excel')
-def export_excel():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT id, main_product, option, description, mrp, category FROM products", conn)
-    conn.close()
-
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Products')
-
-    output.seek(0)
-    return send_file(
-        output,
-        download_name='walkmate_products.xlsx',
-        as_attachment=True,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+        print(f"❌ Failed to parse log: {e}")
 
 # =========================
-# 🚀 Run the App
+# 🖀 Run App
 # =========================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
