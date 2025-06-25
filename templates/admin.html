@@ -59,11 +59,38 @@
       width: 100px;
       border-radius: 4px;
     }
+    .search-export {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      max-width: 700px;
+    }
+    #searchBox {
+      padding: 10px;
+      width: 70%;
+      font-size: 14px;
+    }
+    #exportBtn {
+      padding: 10px 20px;
+      background-color: #007bff;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #exportBtn:hover {
+      background-color: #0056b3;
+    }
   </style>
 </head>
 <body>
 
-  <h2>Welcome, Walkmate</h2>
+  <div style="display: flex; align-items: center; margin-bottom: 20px;">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Walkmate Logo" style="height: 60px; margin-right: 20px;">
+    <h2>Welcome, Walkmate</h2>
+  </div>
 
   <form method="POST" action="{{ url_for('add_product') }}" enctype="multipart/form-data">
     <input type="text" name="main_product" placeholder="Main Product" required>
@@ -75,10 +102,13 @@
     <button type="submit">Add Product</button>
   </form>
 
-  <hr>
+  <div class="search-export">
+    <input type="text" id="searchBox" placeholder="Search products...">
+    <a href="{{ url_for('export_excel') }}" id="exportBtn" download>Export to Excel</a>
+  </div>
 
   <h3>Product List</h3>
-  <table>
+  <table id="productTable">
     <thead>
       <tr>
         <th>ID</th>
@@ -116,6 +146,18 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <script>
+    const searchBox = document.getElementById('searchBox');
+    searchBox.addEventListener('input', () => {
+      const filter = searchBox.value.toLowerCase();
+      const rows = document.querySelectorAll('#productTable tbody tr');
+      rows.forEach(row => {
+        const text = row.innerText.toLowerCase();
+        row.style.display = text.includes(filter) ? '' : 'none';
+      });
+    });
+  </script>
 
 </body>
 </html>
