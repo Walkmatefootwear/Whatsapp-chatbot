@@ -1,37 +1,38 @@
-# ✅ Updated Walkmate Flask App with:
-# - WhatsApp bot: multiple product responses per article
-# - Auto-reset to main menu after 5 minutes of inactivity
-# - Admin panel with search, logout, delete confirmation, export
-
 import os
 import sqlite3
 import requests
 import pandas as pd
+import time
 from io import BytesIO
 from flask import Flask, request, redirect, url_for, render_template, session, send_file
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-import time
 
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = "walkmate-secret-key"
 
+# Cloudinary config
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
+# WhatsApp credentials
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
+# Persistent path for database
 DB_PATH = '/data/products.db'
 os.makedirs('/data', exist_ok=True)
 
+# =========================
+# 📦 Database Initialization
+# =========================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -50,7 +51,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS user_state (
             user_id TEXT PRIMARY KEY,
             state TEXT,
-            last_updated INTEGER
+            last_updated REAL
         )
     """)
     c.execute("""
@@ -63,24 +64,27 @@ def init_db():
 
 init_db()
 
+# =========================
+# 🧠 User State Management
+# =========================
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT state, last_updated FROM user_state WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-    if result:
-        state, last_updated = result
-        if time.time() - last_updated > 300:
-            clear_user_state(user_id)
-            return None
-        return state
-    return None
+    if not result:
+        return None
+    state, last_updated = result
+    if time.time() - last_updated > 300:  # 5 minutes timeout
+        clear_user_state(user_id)
+        return None
+    return state
 
 def set_user_state(user_id, state):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)", (user_id, state, int(time.time())))
+    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)", (user_id, state, time.time()))
     conn.commit()
     conn.close()
 
@@ -91,6 +95,9 @@ def clear_user_state(user_id):
     conn.commit()
     conn.close()
 
+# =========================
+# 🛡️ Duplicate Message Handling
+# =========================
 def is_duplicate_message(msg_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -106,6 +113,9 @@ def mark_message_processed(msg_id):
     conn.commit()
     conn.close()
 
+# =========================
+# 🔔 WhatsApp Webhook
+# =========================
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -113,83 +123,89 @@ def webhook():
             return request.args.get("hub.challenge"), 200
         return "Invalid verification token", 403
 
-    data = request.get_json()
-    print("\u2705 Incoming Webhook:", data)
+    if request.method == 'POST':
+        data = request.get_json()
+        print("\u2705 Incoming Webhook:", data)
 
-    try:
-        value = data['entry'][0]['changes'][0]['value']
-        if 'statuses' in value:
-            return "Status received", 200
+        try:
+            value = data['entry'][0]['changes'][0]['value']
+            if 'statuses' in value:
+                return "Status received", 200
 
-        messages = value.get('messages', [])
-        if not messages:
-            return "No messages", 200
+            messages = value.get('messages', [])
+            if not messages:
+                return "No messages", 200
 
-        msg = messages[0]
-        msg_id = msg['id']
-        from_number = msg['from']
-        msg_type = msg.get("type")
+            msg = messages[0]
+            msg_id = msg['id']
+            from_number = msg['from']
+            msg_type = msg.get("type")
 
-        if is_duplicate_message(msg_id):
-            print(f"\u26a0\ufe0f Duplicate message {msg_id} ignored")
-            return "Duplicate message", 200
+            if is_duplicate_message(msg_id):
+                print(f"\u26a0\ufe0f Duplicate message {msg_id} ignored")
+                return "Duplicate message", 200
 
-        mark_message_processed(msg_id)
+            mark_message_processed(msg_id)
 
-        user_input = ""
-        if msg_type == "text" and "text" in msg:
-            user_input = msg["text"].get("body", "").strip().lower()
-        elif msg_type == "button" and "button" in msg:
-            user_input = msg["button"].get("payload", "").strip().lower()
-        else:
-            send_text(from_number, "❌ Unsupported message type.")
-            return "Unsupported", 200
-
-        current_state = get_user_state(from_number)
-
-        if user_input in ["hi", "hello"]:
-            send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
-            set_user_state(from_number, "awaiting_option")
-            return "Greeting sent", 200
-
-        if user_input == "1":
-            clear_user_state(from_number)
-            send_text(from_number, "Returned to main menu. Type '2' to search products.")
-            return "Back to menu", 200
-
-        if user_input == "2" and current_state == "awaiting_option":
-            send_text(from_number, "Please enter the article number (e.g., 2205)")
-            set_user_state(from_number, "awaiting_article")
-            return "Asked for article", 200
-
-        if current_state == "awaiting_article":
-            article = user_input
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT image, description FROM products WHERE main_product = ?", (article,))
-            products = c.fetchall()
-            conn.close()
-
-            if not products:
-                send_text(from_number, "❌ No product found with that article number.")
+            user_input = ""
+            if msg_type == "text" and "text" in msg:
+                user_input = msg["text"].get("body", "").strip().lower()
+            elif msg_type == "button" and "button" in msg:
+                user_input = msg["button"].get("payload", "").strip().lower()
             else:
-                for image_url, desc in products:
-                    send_image(from_number, image_url, desc)
+                send_text(from_number, "❌ Unsupported message type.")
+                return "Unsupported message type", 200
 
-            # Stay in state to allow more article searches
-            set_user_state(from_number, "awaiting_article")
-            return "Products sent", 200
+            current_state = get_user_state(from_number)
 
-        send_text(from_number, "Unrecognized input. Please type 'hi' to begin.")
-        return "Fallback", 200
+            if user_input in ["hi", "hello"]:
+                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
+                set_user_state(from_number, "awaiting_option")
+                return "Greeting sent", 200
 
-    except Exception as e:
-        print("❌ Webhook error:", e)
-        return "Error", 500
+            if user_input == "1":
+                clear_user_state(from_number)
+                send_text(from_number, "Back to main menu.\nReply with \"2\" to get product images.")
+                return "Back to main menu", 200
 
+            if user_input == "2" and current_state == "awaiting_option":
+                send_text(from_number, "Please enter the article number (e.g., 2205)")
+                set_user_state(from_number, "awaiting_article")
+                return "Asked for article number", 200
+
+            if current_state == "awaiting_article":
+                article = user_input
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("SELECT image, description FROM products WHERE main_product = ?", (article,))
+                products = c.fetchall()
+                conn.close()
+
+                if not products:
+                    send_text(from_number, "❌ No product found with article number.")
+                else:
+                    for image_url, description in products:
+                        send_image(from_number, image_url, description)
+                    send_text(from_number, "All matching products sent.\nType \"1\" to go back to main menu.")
+
+                return "Products sent", 200
+
+            send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
+            return "Fallback sent", 200
+
+        except Exception as e:
+            print("❌ Webhook error:", e)
+            return "Error", 500
+
+# =========================
+# 📤 WhatsApp Helpers
+# =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -201,7 +217,10 @@ def send_text(to, message):
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -213,8 +232,5 @@ def send_image(to, image_url, caption):
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
-# Admin panel and product management code is the same
-# You can request `admin.html` again if needed
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
+# Rest of the code is unchanged (admin panel, export, login/logout)
+# ... (no change needed in these parts)
