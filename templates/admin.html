@@ -17,7 +17,7 @@
       height: 40px;
       margin-right: 10px;
     }
-    form {
+    form, .search-form {
       background: #fff;
       padding: 20px;
       border-radius: 8px;
@@ -109,9 +109,13 @@
     <button type="submit">Add Product</button>
   </form>
 
-  <a href="{{ url_for('export_excel') }}">
-    <button class="export-btn">Export to Excel</button>
-  </a>
+  <form method="GET" action="{{ url_for('admin') }}" class="search-form">
+    <input type="text" name="search" placeholder="Search products..." value="{{ search_query }}">
+    <button type="submit" class="export-btn">Search</button>
+    <a href="{{ url_for('export_excel') }}">
+      <button type="button" class="export-btn">Export to Excel</button>
+    </a>
+  </form>
 
   <h3>Product List</h3>
   <table>
