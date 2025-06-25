@@ -117,7 +117,7 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("✅ Incoming Webhook:", data)
+        print("\u2705 Incoming Webhook:", data)
 
         try:
             value = data['entry'][0]['changes'][0]['value']
@@ -133,7 +133,6 @@ def webhook():
             from_number = msg['from']
             msg_type = msg.get("type")
 
-            # Skip duplicate message
             if is_duplicate_message(msg_id):
                 print(f"⚠️ Duplicate message {msg_id} ignored")
                 return "Duplicate message", 200
@@ -245,10 +244,25 @@ def logout():
 def admin():
     if 'user' not in session:
         return redirect(url_for('login'))
+
+    search_query = request.args.get('search', '').strip()
     conn = sqlite3.connect(DB_PATH)
-    prods = conn.execute("SELECT * FROM products").fetchall()
+    c = conn.cursor()
+
+    if search_query:
+        c.execute("""
+            SELECT * FROM products WHERE 
+            main_product LIKE ? OR 
+            option LIKE ? OR 
+            description LIKE ? OR
+            category LIKE ?
+        """, (f"%{search_query}%",)*4)
+    else:
+        c.execute("SELECT * FROM products")
+
+    prods = c.fetchall()
     conn.close()
-    return render_template('admin.html', products=prods)
+    return render_template('admin.html', products=prods, search_query=search_query)
 
 @app.route('/add', methods=['POST'])
 def add_product():
