@@ -8,8 +8,14 @@
       margin: 30px;
       background-color: #f7f7f7;
     }
-    h2, h3 {
+    h2 {
       color: #333;
+      display: flex;
+      align-items: center;
+    }
+    h2 img {
+      height: 40px;
+      margin-right: 10px;
     }
     form {
       background: #fff;
@@ -17,25 +23,48 @@
       border-radius: 8px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.1);
       margin-bottom: 30px;
-      max-width: 700px;
+      max-width: 100%;
+    }
+    form div {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
     }
     input, textarea, button {
-      display: block;
-      margin: 10px 0;
       padding: 10px;
-      width: 100%;
       font-size: 14px;
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+    input[type="text"], input[type="file"], textarea {
+      flex: 1;
+      min-width: 200px;
+    }
+    textarea {
+      flex-basis: 100%;
+    }
     button {
+      margin-top: 15px;
       background-color: #28a745;
       color: white;
       font-weight: bold;
       cursor: pointer;
+      border: none;
     }
     button:hover {
       background-color: #218838;
+    }
+    .export-btn {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      margin-bottom: 20px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .export-btn:hover {
+      background-color: #0056b3;
     }
     table {
       width: 100%;
@@ -59,56 +88,33 @@
       width: 100px;
       border-radius: 4px;
     }
-    .search-export {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      max-width: 700px;
-    }
-    #searchBox {
-      padding: 10px;
-      width: 70%;
-      font-size: 14px;
-    }
-    #exportBtn {
-      padding: 10px 20px;
-      background-color: #007bff;
-      color: white;
-      font-weight: bold;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    #exportBtn:hover {
-      background-color: #0056b3;
-    }
   </style>
 </head>
 <body>
 
-  <div style="display: flex; align-items: center; margin-bottom: 20px;">
-    <img src="{{ url_for('static', filename='logo.png') }}" alt="Walkmate Logo" style="height: 60px; margin-right: 20px;">
-    <h2>Welcome, Walkmate</h2>
-  </div>
+  <h2>
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Walkmate Logo">
+    Walkmate Admin Panel
+  </h2>
 
   <form method="POST" action="{{ url_for('add_product') }}" enctype="multipart/form-data">
-    <input type="text" name="main_product" placeholder="Main Product" required>
-    <input type="text" name="option" placeholder="Option" required>
-    <input type="file" name="image" accept="image/*" required>
-    <textarea name="description" placeholder="Description" rows="3"></textarea>
-    <input type="text" name="mrp" placeholder="MRP">
-    <input type="text" name="category" placeholder="Category">
+    <div>
+      <input type="text" name="main_product" placeholder="Main Product" required>
+      <input type="text" name="option" placeholder="Option" required>
+      <input type="text" name="mrp" placeholder="MRP">
+      <input type="text" name="category" placeholder="Category">
+      <input type="file" name="image" accept="image/*" required>
+      <textarea name="description" placeholder="Description" rows="3"></textarea>
+    </div>
     <button type="submit">Add Product</button>
   </form>
 
-  <div class="search-export">
-    <input type="text" id="searchBox" placeholder="Search products...">
-    <a href="{{ url_for('export_excel') }}" id="exportBtn" download>Export to Excel</a>
-  </div>
+  <a href="{{ url_for('export_excel') }}">
+    <button class="export-btn">Export to Excel</button>
+  </a>
 
   <h3>Product List</h3>
-  <table id="productTable">
+  <table>
     <thead>
       <tr>
         <th>ID</th>
@@ -139,25 +145,13 @@
         <td>{{ prod[6] }}</td>
         <td>
           <form method="POST" action="{{ url_for('delete_product', id=prod[0]) }}">
-            <button type="submit" style="background-color: #dc3545;">Delete</button>
+            <button type="submit" style="background-color: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 4px;">Delete</button>
           </form>
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-
-  <script>
-    const searchBox = document.getElementById('searchBox');
-    searchBox.addEventListener('input', () => {
-      const filter = searchBox.value.toLowerCase();
-      const rows = document.querySelectorAll('#productTable tbody tr');
-      rows.forEach(row => {
-        const text = row.innerText.toLowerCase();
-        row.style.display = text.includes(filter) ? '' : 'none';
-      });
-    });
-  </script>
 
 </body>
 </html>
