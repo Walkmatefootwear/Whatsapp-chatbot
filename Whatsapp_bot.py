@@ -7,6 +7,7 @@ from flask import Flask, request, redirect, url_for, render_template, session, s
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
+import time
 
 load_dotenv()
 
@@ -35,7 +36,6 @@ os.makedirs('/data', exist_ok=True)
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-
     c.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,21 +47,18 @@ def init_db():
             category TEXT
         )
     """)
-
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_state (
             user_id TEXT PRIMARY KEY,
             state TEXT,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            last_updated INTEGER
         )
     """)
-
     c.execute("""
         CREATE TABLE IF NOT EXISTS processed_messages (
             id TEXT PRIMARY KEY
         )
     """)
-
     conn.commit()
     conn.close()
 
@@ -73,19 +70,22 @@ init_db()
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT state FROM user_state WHERE user_id = ?", (user_id,))
+    c.execute("SELECT state, last_updated FROM user_state WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-    return result[0] if result else None
+    if result:
+        state, last_updated = result
+        if int(time.time()) - last_updated < 300:  # 5 mins
+            return state
+        else:
+            clear_user_state(user_id)
+    return None
 
 def set_user_state(user_id, state):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO user_state (user_id, state, last_updated) 
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET state=excluded.state, last_updated=CURRENT_TIMESTAMP
-    """, (user_id, state))
+    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)",
+              (user_id, state, int(time.time())))
     conn.commit()
     conn.close()
 
@@ -148,83 +148,72 @@ def webhook():
 
             mark_message_processed(msg_id)
 
-            user_input = ""
             if msg_type == "text" and "text" in msg:
                 user_input = msg["text"].get("body", "").strip().lower()
-            elif msg_type == "button" and "button" in msg:
-                user_input = msg["button"].get("payload", "").strip().lower()
             else:
                 send_text(from_number, "❌ Unsupported message type.")
-                return "Unsupported message type", 200
+                return "Unsupported", 200
 
-            current_state = get_user_state(from_number)
+            state = get_user_state(from_number)
+            print("User:", from_number, "State:", state, "Input:", user_input)
 
             if user_input in ["hi", "hello"]:
-                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.")
+                send_text(from_number, "Hi 👋, welcome to Walkmate!\nPlease reply with '2' to get product images.")
                 set_user_state(from_number, "awaiting_option")
                 return "Greeting sent", 200
 
-            if user_input == "2" and current_state == "awaiting_option":
+            if user_input == "2" and state == "awaiting_option":
                 send_text(from_number, "Please enter the article number (e.g., 2205)")
                 set_user_state(from_number, "awaiting_article")
-                return "Asked for article number", 200
+                return "Asked for article", 200
 
-            if current_state == "awaiting_article":
+            if state == "awaiting_article":
                 article = user_input
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 c.execute("SELECT image, description FROM products WHERE main_product = ?", (article,))
-                products = c.fetchall()
+                results = c.fetchall()
                 conn.close()
 
-                if not products:
-                    send_text(from_number, "❌ No product found with article number.")
+                if not results:
+                    send_text(from_number, "❌ No product found with that article number.")
                 else:
-                    for image_url, description in products:
-                        send_image(from_number, image_url, description)
-
+                    for image_url, desc in results:
+                        send_image(from_number, image_url, desc)
                 clear_user_state(from_number)
                 return "Products sent", 200
 
             send_text(from_number, "Unrecognized input. Please type 'hi' to start.")
-            return "Fallback sent", 200
+            return "Fallback", 200
 
         except Exception as e:
             print("❌ Webhook error:", e)
             return "Error", 500
 
 # =========================
-# 📄 WhatsApp Helpers
+# 📤 WhatsApp Senders
 # =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    data = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "text",
         "text": {"body": message}
     }
-    res = requests.post(url, headers=headers, json=payload)
-    print("📨 Text sent:", res.status_code, res.text)
+    requests.post(url, headers=headers, json=data)
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    data = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "image",
         "image": {"link": image_url, "caption": caption}
     }
-    res = requests.post(url, headers=headers, json=payload)
-    print("📨 Image sent:", res.status_code, res.text)
+    res = requests.post(url, headers=headers, json=data)
     if res.status_code != 200:
         send_text(to, f"❌ Failed to send image.\n{res.text}")
 
@@ -254,24 +243,19 @@ def admin():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    search_query = request.args.get('search', '').strip()
+    search = request.args.get('search', '').strip()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-
-    if search_query:
+    if search:
         c.execute("""
-            SELECT * FROM products WHERE 
-            main_product LIKE ? OR 
-            option LIKE ? OR 
-            description LIKE ? OR
-            category LIKE ?
-        """, (f"%{search_query}%",)*4)
+            SELECT * FROM products WHERE
+            main_product LIKE ? OR option LIKE ? OR description LIKE ? OR category LIKE ?
+        """, (f"%{search}%",)*4)
     else:
         c.execute("SELECT * FROM products")
-
     prods = c.fetchall()
     conn.close()
-    return render_template('admin.html', products=prods, search_query=search_query)
+    return render_template('admin.html', products=prods, search_query=search)
 
 @app.route('/add', methods=['POST'])
 def add_product():
@@ -292,16 +276,16 @@ def add_product():
             image_url = upload_result.get('secure_url')
 
         conn = sqlite3.connect(DB_PATH)
-        conn.execute(
-            "INSERT INTO products (main_product, option, image, description, mrp, category) VALUES (?, ?, ?, ?, ?, ?)",
-            (main_product, option, image_url, description, mrp, category)
-        )
+        conn.execute("""
+            INSERT INTO products (main_product, option, image, description, mrp, category)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (main_product, option, image_url, description, mrp, category))
         conn.commit()
         conn.close()
         return redirect(url_for('admin'))
 
     except Exception as e:
-        print("❌ ERROR in /add:", e)
+        print("❌ Add product error:", e)
         return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
@@ -317,23 +301,23 @@ def delete_product(id):
 @app.route('/export_excel')
 def export_excel():
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT id, main_product, option, description, mrp, category FROM products", conn)
+    df = pd.read_sql_query("SELECT * FROM products", conn)
     conn.close()
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Products')
-
     output.seek(0)
+
     return send_file(
         output,
-        download_name='walkmate_products.xlsx',
+        download_name="walkmate_products.xlsx",
         as_attachment=True,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
 # =========================
-# 🚀 Run the App
+# 🚀 Run App
 # =========================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
