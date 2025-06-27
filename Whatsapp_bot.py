@@ -14,14 +14,12 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = "walkmate-secret-key"
 
-# Cloudinary config
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
-# WhatsApp credentials
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
@@ -29,9 +27,6 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 DB_PATH = '/data/products.db'
 os.makedirs('/data', exist_ok=True)
 
-# =========================
-# Database Initialization
-# =========================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -63,9 +58,6 @@ def init_db():
 
 init_db()
 
-# =========================
-# User State Management
-# =========================
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -95,9 +87,6 @@ def clear_user_state(user_id):
     conn.commit()
     conn.close()
 
-# =========================
-# Duplicate Message Handling
-# =========================
 def is_duplicate_message(msg_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -113,9 +102,6 @@ def mark_message_processed(msg_id):
     conn.commit()
     conn.close()
 
-# =========================
-# WhatsApp Webhook
-# =========================
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -142,7 +128,7 @@ def webhook():
             msg_type = msg.get("type")
 
             if is_duplicate_message(msg_id):
-                print(f"\u26a0\ufe0f Duplicate message {msg_id} ignored")
+                print(f"⚠️ Duplicate message {msg_id} ignored")
                 return "Duplicate message", 200
 
             mark_message_processed(msg_id)
@@ -152,8 +138,17 @@ def webhook():
                 user_input = msg["text"].get("body", "").strip().lower()
             elif msg_type == "button" and "button" in msg:
                 user_input = msg["button"].get("payload", "").strip().lower()
+            elif msg_type == "interactive":
+                interactive = msg.get("interactive", {})
+                if interactive.get("type") == "button_reply":
+                    user_input = interactive["button_reply"]["title"].strip().lower()
+                elif interactive.get("type") == "list_reply":
+                    user_input = interactive["list_reply"]["title"].strip().lower()
+                else:
+                    send_text(from_number, "❌ Unsupported interactive type.")
+                    return "Unsupported interactive type", 200
             else:
-                send_text(from_number, "\u274c Unsupported message type.")
+                send_text(from_number, "❌ Unsupported message type.")
                 return "Unsupported message type", 200
 
             current_state = get_user_state(from_number)
@@ -161,7 +156,7 @@ def webhook():
             if user_input in ["hi", "hello"]:
                 send_button_message(
                     from_number,
-                    "Hi \ud83d\udc4b, welcome to Walkmate!\nPlease reply with \"2\" to get product images.",
+                    "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.",
                     [{"type": "reply", "reply": {"id": "option_2", "title": "2"}}]
                 )
                 set_user_state(from_number, "awaiting_option")
@@ -176,7 +171,7 @@ def webhook():
                 if user_input == "1":
                     send_button_message(
                         from_number,
-                        "Hi \ud83d\udc4b, welcome to Walkmate!\nPlease reply with \"2\" to get product images.",
+                        "Hi 👋, welcome to Walkmate!\nPlease reply with \"2\" to get product images.",
                         [{"type": "reply", "reply": {"id": "option_2", "title": "2"}}]
                     )
                     set_user_state(from_number, "awaiting_option")
@@ -190,13 +185,13 @@ def webhook():
                 conn.close()
 
                 if not products:
-                    send_text(from_number, "\u274c No product found with article number.")
+                    send_text(from_number, "❌ No product found with article number.")
                 else:
                     for image_url, description in products:
                         send_image(from_number, image_url, description)
                     send_button_message(
                         from_number,
-                        "\u2705 All products sent.\nReply with 1 to go back to the main menu or enter another article number to view more products.",
+                        "✅ All products sent.\nReply with 1 to go back to the main menu or enter another article number to view more products.",
                         [
                             {"type": "reply", "reply": {"id": "go_main", "title": "1"}},
                             {"type": "reply", "reply": {"id": "new_article", "title": "Enter New Article"}}
@@ -209,12 +204,9 @@ def webhook():
             return "Fallback sent", 200
 
         except Exception as e:
-            print("\u274c Webhook error:", e)
+            print("❌ Webhook error:", e)
             return "Error", 500
 
-# =========================
-# WhatsApp Helpers
-# =========================
 def send_text(to, message):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     headers = {
@@ -228,7 +220,7 @@ def send_text(to, message):
         "text": {"body": message}
     }
     res = requests.post(url, headers=headers, json=payload)
-    print("\ud83d\udce8 Text sent:", res.status_code, res.text)
+    print("📨 Text sent:", res.status_code, res.text)
 
 def send_image(to, image_url, caption):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -243,9 +235,9 @@ def send_image(to, image_url, caption):
         "image": {"link": image_url, "caption": caption}
     }
     res = requests.post(url, headers=headers, json=payload)
-    print("\ud83d\udce8 Image sent:", res.status_code, res.text)
+    print("📨 Image sent:", res.status_code, res.text)
     if res.status_code != 200:
-        send_text(to, f"\u274c Failed to send image.\n{res.text}")
+        send_text(to, f"❌ Failed to send image.\n{res.text}")
 
 def send_button_message(to, body, buttons):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -264,11 +256,8 @@ def send_button_message(to, body, buttons):
         }
     }
     res = requests.post(url, headers=headers, json=payload)
-    print("\ud83d\udd39 Button message sent:", res.status_code, res.text)
+    print("🔹 Button message sent:", res.status_code, res.text)
 
-# =========================
-# Admin Panel
-# =========================
 @app.route('/')
 def index():
     return redirect(url_for('login'))
@@ -339,7 +328,7 @@ def add_product():
         return redirect(url_for('admin'))
 
     except Exception as e:
-        print("\u274c ERROR in /add:", e)
+        print("❌ ERROR in /add:", e)
         return "Internal Server Error", 500
 
 @app.route('/delete/<int:id>', methods=['POST'])
@@ -370,8 +359,5 @@ def export_excel():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
-# =========================
-# \ud83d\ude80 Run the App
-# =========================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
