@@ -191,8 +191,7 @@ def webhook():
                         send_image(from_number, image_url, description)
                     send_button_message(
     from_number,
-    "✅ All products sent.
-Reply with 1 to go back to the main menu.",
+    "✅ Reply with 1 to go back to the main menu or enter another article number to view another product.",
     [
         {"type": "reply", "reply": {"id": "go_main", "title": "1"}}
     ]
