@@ -190,13 +190,13 @@ def webhook():
                     for image_url, description in products:
                         send_image(from_number, image_url, description)
                     send_button_message(
-                        from_number,
-                        "✅ All products sent.\nReply with 1 to go back to the main menu or enter another article number to view more products.",
-                        [
-                            {"type": "reply", "reply": {"id": "go_main", "title": "1"}},
-                            {"type": "reply", "reply": {"id": "new_article", "title": "Enter New Article"}}
-                        ]
-                    )
+    from_number,
+    "✅ All products sent.
+Reply with 1 to go back to the main menu.",
+    [
+        {"type": "reply", "reply": {"id": "go_main", "title": "1"}}
+    ]
+)
                     set_user_state(from_number, "awaiting_article")
                 return "Products sent", 200
 
