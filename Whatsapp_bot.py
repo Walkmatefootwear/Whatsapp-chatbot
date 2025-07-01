@@ -23,6 +23,7 @@ cloudinary.config(
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
+BACKUP_TOKEN = os.getenv("BACKUP_TOKEN")
 
 DB_PATH = '/data/products.db'
 os.makedirs('/data', exist_ok=True)
@@ -111,7 +112,7 @@ def webhook():
 
     if request.method == 'POST':
         data = request.get_json()
-        print("\u2705 Incoming Webhook:", data)
+        print("✅ Incoming Webhook:", data)
 
         try:
             value = data['entry'][0]['changes'][0]['value']
@@ -190,12 +191,10 @@ def webhook():
                     for image_url, description in products:
                         send_image(from_number, image_url, description)
                     send_button_message(
-    from_number,
-    "✅ Reply with 1 to go back to the main menu or enter another article number to view another product.",
-    [
-        {"type": "reply", "reply": {"id": "go_main", "title": "1"}}
-    ]
-)
+                        from_number,
+                        "✅ Reply with 1 to go back to the main menu or enter another article number to view another product.",
+                        [{"type": "reply", "reply": {"id": "go_main", "title": "1"}}]
+                    )
                     set_user_state(from_number, "awaiting_article")
                 return "Products sent", 200
 
@@ -357,6 +356,16 @@ def export_excel():
         as_attachment=True,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+@app.route('/download-db')
+def download_db():
+    token = request.args.get('token')
+    if token != BACKUP_TOKEN:
+        return "Unauthorized", 403
+
+    if os.path.exists(DB_PATH):
+        return send_file(DB_PATH, as_attachment=True)
+    return "Database file not found", 404
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
