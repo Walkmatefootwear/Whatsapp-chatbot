@@ -263,7 +263,7 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Export@2025':
+        if request.form['username'] == 'Walkmate' and request.form['password'] == 'Exp@2025@walk':
             session['user'] = 'Walkmate'
             return redirect(url_for('admin'))
         return render_template('login.html', error='Invalid credentials')
