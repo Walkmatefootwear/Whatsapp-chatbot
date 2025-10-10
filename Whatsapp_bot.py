@@ -4,6 +4,7 @@ import time
 import requests
 import pandas as pd
 from io import BytesIO
+from urllib.parse import unquote_plus
 from flask import Flask, request, redirect, url_for, render_template, session, send_file
 from dotenv import load_dotenv
 import cloudinary
@@ -20,11 +21,19 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
+# ===== WhatsApp / Env =====
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
-BACKUP_TOKEN = os.getenv("BACKUP_TOKEN")
+BACKUP_TOKEN = os.getenv("BACKUP_TOKEN")  # also used as simple API key for URL triggers
+GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
 
+def graph_messages_url():
+    if not PHONE_ID:
+        raise RuntimeError("WHATSAPP_PHONE_ID is not set in environment")
+    return f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
+
+# ===== Database =====
 DB_PATH = '/data/products.db'
 os.makedirs('/data', exist_ok=True)
 
@@ -103,6 +112,135 @@ def mark_message_processed(msg_id):
     conn.commit()
     conn.close()
 
+# ===== WhatsApp Send Helpers (use GRAPH_API_VERSION) =====
+def send_text(to, message):
+    url = graph_messages_url()
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": message}
+    }
+    res = requests.post(url, headers=headers, json=payload)
+    print("📨 Text sent:", res.status_code, res.text)
+
+def send_image(to, image_url, caption):
+    url = graph_messages_url()
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "image",
+        "image": {"link": image_url, "caption": caption}
+    }
+    res = requests.post(url, headers=headers, json=payload)
+    print("📨 Image sent:", res.status_code, res.text)
+    if res.status_code != 200:
+        send_text(to, f"❌ Failed to send image.\n{res.text}")
+
+def send_button_message(to, body, buttons):
+    url = graph_messages_url()
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body},
+            "action": {"buttons": buttons}
+        }
+    }
+    res = requests.post(url, headers=headers, json=payload)
+    print("🔹 Button message sent:", res.status_code, res.text)
+
+# ===== Tiny URL-Trigger Module (patched in) =====
+def _post_whatsapp(payload):
+    if not ACCESS_TOKEN or not PHONE_ID:
+        return {"ok": False, "error": "Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_ID in .env"}, 500
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    url = graph_messages_url()
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"raw": resp.text}
+    return {"ok": resp.status_code in (200, 201), "status": resp.status_code, "data": data}, resp.status_code
+
+@app.get("/send-whatsapp")
+def send_whatsapp_url():
+    """
+    GET /send-whatsapp?api_key=...&to=91XXXXXXXXXX&text=Hello%20World
+    Use inside 24h customer-service window (free-form text)
+    """
+    api_key = request.args.get("api_key")
+    if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
+        return {"ok": False, "error": "Unauthorized"}, 403
+
+    to = request.args.get("to", "").strip()
+    text = request.args.get("text", "").strip()
+    if not to or not text:
+        return {"ok": False, "error": "Missing 'to' or 'text' query param"}, 400
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": unquote_plus(text)}
+    }
+    return _post_whatsapp(payload)
+
+@app.get("/send-template")
+def send_template_url():
+    """
+    GET /send-template?api_key=...&to=91XXXXXXXXXX&name=order_update&lang=en&vars=a,b,c
+    Use outside 24h window (pre-approved template). 'vars' becomes body parameters.
+    """
+    api_key = request.args.get("api_key")
+    if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
+        return {"ok": False, "error": "Unauthorized"}, 403
+
+    to = request.args.get("to", "").strip()
+    name = request.args.get("name", "").strip()
+    lang = request.args.get("lang", "en").strip()
+    vars_csv = request.args.get("vars", "").strip()
+
+    if not to or not name:
+        return {"ok": False, "error": "Missing 'to' or 'name' query param"}, 400
+
+    parameters = []
+    if vars_csv:
+        for v in vars_csv.split(","):
+            v = v.strip()
+            if v:
+                parameters.append({"type": "text", "text": v})
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": name,
+            "language": {"code": lang},
+            "components": [{"type": "body", "parameters": parameters}] if parameters else []
+        }
+    }
+    return _post_whatsapp(payload)
+
+# ===== Webhook for incoming messages =====
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -205,57 +343,7 @@ def webhook():
             print("❌ Webhook error:", e)
             return "Error", 500
 
-def send_text(to, message):
-    url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": message}
-    }
-    res = requests.post(url, headers=headers, json=payload)
-    print("📨 Text sent:", res.status_code, res.text)
-
-def send_image(to, image_url, caption):
-    url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "image",
-        "image": {"link": image_url, "caption": caption}
-    }
-    res = requests.post(url, headers=headers, json=payload)
-    print("📨 Image sent:", res.status_code, res.text)
-    if res.status_code != 200:
-        send_text(to, f"❌ Failed to send image.\n{res.text}")
-
-def send_button_message(to, body, buttons):
-    url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": body},
-            "action": {"buttons": buttons}
-        }
-    }
-    res = requests.post(url, headers=headers, json=payload)
-    print("🔹 Button message sent:", res.status_code, res.text)
-
+# ===== Web UI & Admin =====
 @app.route('/')
 def index():
     return redirect(url_for('login'))
@@ -367,5 +455,6 @@ def download_db():
         return send_file(DB_PATH, as_attachment=True)
     return "Database file not found", 404
 
+# ===== Run =====
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
