@@ -25,7 +25,7 @@ cloudinary.config(
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
-BACKUP_TOKEN = os.getenv("BACKUP_TOKEN")  # also used as simple API key for URL triggers
+BACKUP_TOKEN = os.getenv("BACKUP_TOKEN")  # used as simple API key for URL triggers
 GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
 
 def graph_messages_url():
@@ -33,9 +33,12 @@ def graph_messages_url():
         raise RuntimeError("WHATSAPP_PHONE_ID is not set in environment")
     return f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
 
-# ===== Database =====
-DB_PATH = '/data/products.db'
-os.makedirs('/data', exist_ok=True)
+# ===== Database (portable defaults; works on Render without a disk) =====
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))  # /opt/render/project/src
+DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))  # default ./data
+os.makedirs(DATA_DIR, exist_ok=True)
+
+DB_PATH = os.getenv("DB_PATH", os.path.join(DATA_DIR, "products.db"))
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -112,7 +115,7 @@ def mark_message_processed(msg_id):
     conn.commit()
     conn.close()
 
-# ===== WhatsApp Send Helpers (use GRAPH_API_VERSION) =====
+# ===== WhatsApp Send Helpers =====
 def send_text(to, message):
     url = graph_messages_url()
     headers = {
@@ -164,7 +167,7 @@ def send_button_message(to, body, buttons):
     res = requests.post(url, headers=headers, json=payload)
     print("🔹 Button message sent:", res.status_code, res.text)
 
-# ===== Tiny URL-Trigger Module (patched in) =====
+# ===== Tiny URL-Trigger Module (patched) =====
 def _post_whatsapp(payload):
     if not ACCESS_TOKEN or not PHONE_ID:
         return {"ok": False, "error": "Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_ID in .env"}, 500
@@ -434,6 +437,7 @@ def export_excel():
     conn.close()
 
     output = BytesIO()
+    # requires XlsxWriter in requirements; or remove engine=... to let pandas choose.
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Products')
 
@@ -455,6 +459,18 @@ def download_db():
         return send_file(DB_PATH, as_attachment=True)
     return "Database file not found", 404
 
+# (Optional) quick health
+@app.get("/health")
+def health():
+    return {
+        "routes": ["webhook", "send-whatsapp", "send-template", "admin", "export_excel"],
+        "db_path": DB_PATH,
+        "db_exists": os.path.exists(DB_PATH),
+        "has_BACKUP_TOKEN": bool(BACKUP_TOKEN),
+        "graph_version": GRAPH_API_VERSION
+    }, 200
+
 # ===== Run =====
 if __name__ == '__main__':
+    # When running locally (dev)
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
