@@ -194,7 +194,6 @@ def _post_whatsapp(payload):
             data = {"raw": resp.text}
         return {"ok": resp.status_code in (200, 201), "status": resp.status_code, "data": data}, resp.status_code
     except RequestException as e:
-        # Return structured error without crashing the worker
         return {
             "ok": False,
             "error": f"NetworkError: {type(e).__name__}",
@@ -222,15 +221,21 @@ def send_whatsapp_url():
         "type": "text",
         "text": {"body": unquote_plus(text)}
     }
-    print("➡️  Outbound payload (text):", payload)     # log outbound
+    print("➡️  Outbound payload (text):", payload)
     res, code = _post_whatsapp(payload)
-    print("⬅️  Meta response (text):", res)            # log response
+    print("⬅️  Meta response (text):", res)
     return res, code
 
 @app.get("/send-template")
 def send_template_url():
     """
-    GET /send-template?api_key=...&to=91XXXXXXXXXX&name=order_update&lang=en&vars=a,b,c
+    GET /send-template?api_key=...&to=91XXXXXXXXXX
+        &name=template_api_name
+        &lang=en
+        &policy=deterministic         (optional; default deterministic)
+        &header=1                     (optional; include empty header component)
+        &vars=a,b,c                   (body parameters in order)
+
     Use outside 24h window (pre-approved template). 'vars' becomes body parameters.
     """
     api_key = request.args.get("api_key")
@@ -241,10 +246,13 @@ def send_template_url():
     name = request.args.get("name", "").strip()
     lang = request.args.get("lang", "en").strip()
     vars_csv = request.args.get("vars", "").strip()
+    policy = request.args.get("policy", "deterministic").strip()
+    include_header = request.args.get("header", "0").strip().lower() in ("1", "true", "yes")
 
     if not to or not name:
         return {"ok": False, "error": "Missing 'to' or 'name' query param"}, 400
 
+    # Build body parameters from vars=
     parameters = []
     if vars_csv:
         for v in vars_csv.split(","):
@@ -252,19 +260,31 @@ def send_template_url():
             if v:
                 parameters.append({"type": "text", "text": v})
 
+    # Components list
+    components = []
+    if include_header:
+        # Text header with no variables: some accounts need a header stub to avoid (#100)
+        components.append({"type": "header"})
+    if parameters:
+        components.append({"type": "body", "parameters": parameters})
+
+    lang_obj = {"code": lang}
+    if policy:
+        lang_obj["policy"] = policy
+
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "template",
         "template": {
-            "name": name,
-            "language": {"code": lang},
-            "components": [{"type": "body", "parameters": parameters}] if parameters else []
+            "name": name,                 # MUST be the exact API name from Manager
+            "language": lang_obj,         # e.g., {"code":"en","policy":"deterministic"}
+            "components": components
         }
     }
-    print("➡️  Outbound payload (template):", payload)  # log outbound
+    print("➡️  Outbound payload (template):", payload)
     res, code = _post_whatsapp(payload)
-    print("⬅️  Meta response (template):", res)         # log response
+    print("⬅️  Meta response (template):", res)
     return res, code
 
 # ===== Webhook for incoming messages =====
@@ -461,7 +481,6 @@ def export_excel():
     conn.close()
 
     output = BytesIO()
-    # requires XlsxWriter in requirements; or remove engine=... to let pandas choose.
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Products')
 
@@ -496,5 +515,4 @@ def health():
 
 # ===== Run =====
 if __name__ == '__main__':
-    # When running locally (dev)
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
