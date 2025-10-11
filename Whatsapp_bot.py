@@ -2,6 +2,7 @@ import os
 import sqlite3
 import time
 import requests
+from requests import RequestException
 import pandas as pd
 from io import BytesIO
 from urllib.parse import unquote_plus
@@ -128,8 +129,11 @@ def send_text(to, message):
         "type": "text",
         "text": {"body": message}
     }
-    res = requests.post(url, headers=headers, json=payload)
-    print("📨 Text sent:", res.status_code, res.text)
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        print("📨 Text sent:", res.status_code, res.text)
+    except RequestException as e:
+        print("❌ Text send network error:", type(e).__name__, str(e))
 
 def send_image(to, image_url, caption):
     url = graph_messages_url()
@@ -143,10 +147,13 @@ def send_image(to, image_url, caption):
         "type": "image",
         "image": {"link": image_url, "caption": caption}
     }
-    res = requests.post(url, headers=headers, json=payload)
-    print("📨 Image sent:", res.status_code, res.text)
-    if res.status_code != 200:
-        send_text(to, f"❌ Failed to send image.\n{res.text}")
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        print("📨 Image sent:", res.status_code, res.text)
+        if res.status_code != 200:
+            send_text(to, f"❌ Failed to send image.\n{res.text}")
+    except RequestException as e:
+        print("❌ Image send network error:", type(e).__name__, str(e))
 
 def send_button_message(to, body, buttons):
     url = graph_messages_url()
@@ -164,8 +171,11 @@ def send_button_message(to, body, buttons):
             "action": {"buttons": buttons}
         }
     }
-    res = requests.post(url, headers=headers, json=payload)
-    print("🔹 Button message sent:", res.status_code, res.text)
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        print("🔹 Button message sent:", res.status_code, res.text)
+    except RequestException as e:
+        print("❌ Button send network error:", type(e).__name__, str(e))
 
 # ===== Tiny URL-Trigger Module (patched) =====
 def _post_whatsapp(payload):
@@ -176,12 +186,20 @@ def _post_whatsapp(payload):
         "Content-Type": "application/json"
     }
     url = graph_messages_url()
-    resp = requests.post(url, headers=headers, json=payload, timeout=30)
     try:
-        data = resp.json()
-    except Exception:
-        data = {"raw": resp.text}
-    return {"ok": resp.status_code in (200, 201), "status": resp.status_code, "data": data}, resp.status_code
+        resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"raw": resp.text}
+        return {"ok": resp.status_code in (200, 201), "status": resp.status_code, "data": data}, resp.status_code
+    except RequestException as e:
+        # Return structured error without crashing the worker
+        return {
+            "ok": False,
+            "error": f"NetworkError: {type(e).__name__}",
+            "detail": str(e)
+        }, 502
 
 @app.get("/send-whatsapp")
 def send_whatsapp_url():
@@ -204,7 +222,10 @@ def send_whatsapp_url():
         "type": "text",
         "text": {"body": unquote_plus(text)}
     }
-    return _post_whatsapp(payload)
+    print("➡️  Outbound payload (text):", payload)     # log outbound
+    res, code = _post_whatsapp(payload)
+    print("⬅️  Meta response (text):", res)            # log response
+    return res, code
 
 @app.get("/send-template")
 def send_template_url():
@@ -241,7 +262,10 @@ def send_template_url():
             "components": [{"type": "body", "parameters": parameters}] if parameters else []
         }
     }
-    return _post_whatsapp(payload)
+    print("➡️  Outbound payload (template):", payload)  # log outbound
+    res, code = _post_whatsapp(payload)
+    print("⬅️  Meta response (template):", res)         # log response
+    return res, code
 
 # ===== Webhook for incoming messages =====
 @app.route('/webhook', methods=['GET', 'POST'])
