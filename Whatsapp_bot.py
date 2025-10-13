@@ -229,6 +229,8 @@ def send_whatsapp_url():
 @app.get("/send-template")
 def send_template_url():
     """
+    Generic template sender.
+
     GET /send-template?api_key=...&to=91XXXXXXXXXX
         &name=template_api_name
         &lang=en
@@ -236,18 +238,18 @@ def send_template_url():
         &header=1                     (optional; include empty header component)
         &vars=a,b,c                   (body parameters in order)
 
-    Use outside 24h window (pre-approved template). 'vars' becomes body parameters.
+    Use outside 24h window (pre-approved template).
     """
     api_key = request.args.get("api_key")
     if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
         return {"ok": False, "error": "Unauthorized"}, 403
 
     to = request.args.get("to", "").strip()
-    name = request.args.get("name", "").strip()
-    lang = request.args.get("lang", "en").strip()
-    vars_csv = request.args.get("vars", "").strip()
-    policy = request.args.get("policy", "deterministic").strip()
-    include_header = request.args.get("header", "0").strip().lower() in ("1", "true", "yes")
+    name = (request.args.get("name", "") or "").strip()
+    lang = (request.args.get("lang", "en") or "en").strip()
+    vars_csv = (request.args.get("vars", "") or "").strip()
+    policy = (request.args.get("policy", "deterministic") or "deterministic").strip()
+    include_header = (request.args.get("header", "0") or "0").strip().lower() in ("1", "true", "yes")
 
     if not to or not name:
         return {"ok": False, "error": "Missing 'to' or 'name' query param"}, 400
@@ -256,15 +258,13 @@ def send_template_url():
     parameters = []
     if vars_csv:
         for v in vars_csv.split(","):
-            v = v.strip()
-            if v:
+            v = (v or "").strip()
+            if v != "":
                 parameters.append({"type": "text", "text": v})
 
-    # Components list
     components = []
     if include_header:
-        # Text header with no variables: some accounts need a header stub to avoid (#100)
-        components.append({"type": "header"})
+        components.append({"type": "header"})  # text header, no variables
     if parameters:
         components.append({"type": "body", "parameters": parameters})
 
@@ -277,15 +277,65 @@ def send_template_url():
         "to": to,
         "type": "template",
         "template": {
-            "name": name,                 # MUST be the exact API name from Manager
+            "name": name,                 # exact API name
             "language": lang_obj,         # e.g., {"code":"en","policy":"deterministic"}
             "components": components
         }
     }
-    print("➡️  Outbound payload (template):", payload)
+    print(f"➡️  Outbound payload (template): name='{name}', lang='{lang}', params={len(parameters)} ::", payload)
     res, code = _post_whatsapp(payload)
     print("⬅️  Meta response (template):", res)
     return res, code
+
+# ---- Dedicated endpoint for your 'shipment_details' template ----
+@app.get("/send-shipment")
+def send_shipment():
+    """
+    Safer, explicit sender for template 'shipment_details' (en), 5 body vars:
+    {{order_id}}, {{cases}}, {{vehicle_number}}, {{driver_name}}, {{driver_contact}}
+
+    Example:
+    /send-shipment?api_key=...&to=91XXXXXXXXXX&order_id=12524&cases=300&vehicle=KA09B1452&driver_name=Raju%20Somu&driver_contact=9865252142
+    """
+    api_key = request.args.get("api_key")
+    if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
+        return {"ok": False, "error": "Unauthorized"}, 403
+
+    to = (request.args.get("to", "") or "").strip()
+    order_id = (request.args.get("order_id", "") or "").strip()
+    cases = (request.args.get("cases", "") or "").strip()
+    vehicle = (request.args.get("vehicle", "") or "").strip()
+    driver_name = (request.args.get("driver_name", "") or "").strip()
+    driver_contact = (request.args.get("driver_contact", "") or "").strip()
+
+    if not to or not all([order_id, cases, vehicle, driver_name, driver_contact]):
+        return {"ok": False, "error": "Missing one or more required params"}, 400
+
+    parameters = [
+        {"type": "text", "text": order_id},
+        {"type": "text", "text": cases},
+        {"type": "text", "text": vehicle},
+        {"type": "text", "text": driver_name},
+        {"type": "text", "text": driver_contact},
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": "shipment_details",
+            "language": {"code": "en", "policy": "deterministic"},
+            "components": [
+                {"type": "body", "parameters": parameters}
+            ]
+        }
+    }
+    print("➡️  Outbound payload (shipment_details):", payload)
+    res, code = _post_whatsapp(payload)
+    print("⬅️  Meta response (shipment_details):", res)
+    return res, code
+# ------------------------------------------------------------------
 
 # ===== Webhook for incoming messages =====
 @app.route('/webhook', methods=['GET', 'POST'])
@@ -506,7 +556,7 @@ def download_db():
 @app.get("/health")
 def health():
     return {
-        "routes": ["webhook", "send-whatsapp", "send-template", "admin", "export_excel"],
+        "routes": ["webhook", "send-whatsapp", "send-template", "send-shipment", "admin", "export_excel"],
         "db_path": DB_PATH,
         "db_exists": os.path.exists(DB_PATH),
         "has_BACKUP_TOKEN": bool(BACKUP_TOKEN),
