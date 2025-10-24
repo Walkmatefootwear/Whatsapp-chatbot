@@ -604,17 +604,47 @@ def download_db():
         return send_file(DB_PATH, as_attachment=True)
     return "Database file not found", 404
 
-# (Optional) quick health
+# (Optional) quick health check endpoint
 @app.get("/health")
 def health():
     return {
-        "routes": ["webhook", "send-whatsapp", "send-template", "send-shipment", "admin", "export_excel"],
+        "routes": [
+            "webhook",
+            "send-whatsapp",
+            "send-template",
+            "send-shipment",
+            "admin",
+            "export_excel"
+        ],
         "db_path": DB_PATH,
         "db_exists": os.path.exists(DB_PATH),
         "has_BACKUP_TOKEN": bool(BACKUP_TOKEN),
         "graph_version": GRAPH_API_VERSION
     }, 200
 
+
 # ===== Run =====
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
+    import sys
+    import logging
+
+    # --- Logging setup for Render / Gunicorn ---
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+
+    # Ensure all print() statements are flushed to Render logs immediately
+    sys.stdout.reconfigure(line_buffering=True)
+
+    app.logger.setLevel(logging.INFO)
+    print("🚀 WhatsApp Bot starting on 0.0.0.0:" + str(os.environ.get('PORT', 5000)))
+
+    # Run Flask (useful in local or debug mode)
+    app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
+        debug=True
+    )
+
