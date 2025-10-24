@@ -12,11 +12,15 @@ GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
 BACKUP_TOKEN = os.getenv("BACKUP_TOKEN", "WalkBack2025")
 
 def graph_messages_url():
+    """Builds Graph API message URL"""
     return f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
 
 def _post_whatsapp(payload):
     """Send payload to WhatsApp Graph API"""
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
     url = graph_messages_url()
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=20)
@@ -26,10 +30,16 @@ def _post_whatsapp(payload):
         print(f"❌ WhatsApp send failed: {e}", flush=True)
         return {"error": str(e)}, 500
 
+
 def register_order_routes(app):
-    # ===========================
+    """
+    Registers WhatsApp message endpoints:
+      /send-template - for order confirmations or general messages
+      /send-shipment - for shipment details
+    """
+    # ===========================================================
     # 1️⃣ Generic Template Sender
-    # ===========================
+    # ===========================================================
     @app.get("/send-template")
     def send_template_url():
         try:
@@ -42,8 +52,8 @@ def register_order_routes(app):
             lang = request.args.get("lang", "en_US").strip()
             vars_csv = request.args.get("vars", "").strip()
 
-            # Split vars safely
-            parameters = [{"type": "text", "text": v.strip()} for v in vars_csv.split(",") if v.strip()]
+            parameters = [{"type": "text", "text": v.strip()}
+                          for v in vars_csv.split(",") if v.strip()]
             components = [{"type": "body", "parameters": parameters}] if parameters else []
 
             payload = {
@@ -59,20 +69,20 @@ def register_order_routes(app):
 
             data, code = _post_whatsapp(payload)
 
-            # WhatsApp Cloud API returns 400 when template param count mismatched
             if code == 400 and "Number of parameters" in str(data):
-                print("⚠️ Template parameter mismatch detected. Check registered placeholders.", flush=True)
+                print("⚠️ Template parameter mismatch detected. Check placeholders.", flush=True)
 
-            # Always return 200 to stop Meta retries
+            # Always return 200 OK to stop Meta retries
             return {"ok": code in (200, 201), "data": data, "status": code}, 200
 
         except Exception as e:
-            print("❌ send-template error:", e, flush=True)
-            return {"ok": False, "error": str(e)}, 200  # always 200 OK to stop retries
+            print(f"❌ send-template error: {e}", flush=True)
+            return {"ok": False, "error": str(e)}, 200
 
-    # ===========================
+
+    # ===========================================================
     # 2️⃣ Shipment Template Sender
-    # ===========================
+    # ===========================================================
     @app.get("/send-shipment")
     def send_shipment():
         try:
@@ -87,9 +97,10 @@ def register_order_routes(app):
             driver_name = request.args.get("driver_name", "").strip()
             driver_contact = request.args.get("driver_contact", "").strip()
 
-            # Expected variable count should match your template’s placeholders
+            # Build only the exact number of params your template needs (5)
             vars = [order_id, cases, vehicle, driver_name, driver_contact]
-            parameters = [{"type": "text", "text": v} for v in vars if v]
+            parameters = [{"type": "text", "text": v}
+                          for v in vars if v and v != "0"]
 
             payload = {
                 "messaging_product": "whatsapp",
@@ -106,9 +117,8 @@ def register_order_routes(app):
             if code == 400 and "Number of parameters" in str(data):
                 print("⚠️ Shipment template parameter mismatch detected.", flush=True)
 
-            # Always return 200 even if WhatsApp rejects the message
             return {"ok": code in (200, 201), "data": data, "status": code}, 200
 
         except Exception as e:
-            print("❌ send-shipment error:", e, flush=True)
-            return {"ok": False, "error": str(e)}, 200  # always 200 OK
+            print(f"❌ send-shipment error: {e}", flush=True)
+            return {"ok": False, "error": str(e)}, 200
