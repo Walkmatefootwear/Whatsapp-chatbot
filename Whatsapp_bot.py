@@ -628,23 +628,26 @@ if __name__ == '__main__':
     import sys
     import logging
 
-    # --- Logging setup for Render / Gunicorn ---
+    # ---- Enable live stdout logging (important for Render) ----
     logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
-        handlers=[logging.StreamHandler(sys.stdout)]
+        stream=sys.stdout,
+        level=logging.DEBUG,
+        format='[%(asctime)s] %(levelname)s: %(message)s'
     )
 
-    # Ensure all print() statements are flushed to Render logs immediately
+    # Make sure Python flushes every print() instantly
     sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
 
-    app.logger.setLevel(logging.INFO)
-    print("🚀 WhatsApp Bot starting on 0.0.0.0:" + str(os.environ.get('PORT', 5000)))
+    app.logger.setLevel(logging.DEBUG)
+    print("🚀 WhatsApp Bot initialized successfully.")
+    print("📡 Waiting for webhook messages or URL triggers...")
 
-    # Run Flask (useful in local or debug mode)
     app.run(
         host='0.0.0.0',
         port=int(os.environ.get('PORT', 5000)),
-        debug=True
+        debug=True,
+        use_reloader=False
     )
+
 
