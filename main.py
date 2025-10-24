@@ -10,13 +10,17 @@ app = Flask(__name__)
 handle_webhook(app)
 register_order_routes(app)
 
+@app.route("/")
+def index():
+    """Default route for Render health check"""
+    return "Walkmate WhatsApp Bot is running 🚀", 200
+
 @app.get("/health")
 def health():
-    """Simple health check endpoint"""
     return {
         "status": "ok",
-        "routes": ["/webhook", "/send-template", "/send-shipment"],
-        "env_loaded": bool(os.getenv("WHATSAPP_TOKEN")),
+        "routes": ["/", "/webhook", "/send-template", "/send-shipment"],
+        "env_loaded": bool(os.getenv("WHATSAPP_TOKEN"))
     }, 200
 
 if __name__ == "__main__":
