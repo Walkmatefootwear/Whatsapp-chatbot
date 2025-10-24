@@ -1,3 +1,5 @@
+# Whatsapp_bot.py
+
 import os
 import sqlite3
 import time
@@ -16,6 +18,7 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = "walkmate-secret-key"
 
+# ===== Cloudinary =====
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
@@ -35,7 +38,7 @@ def graph_messages_url():
     return f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
 
 # ===== Database (portable defaults; works on Render without a disk) =====
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))  # /opt/render/project/src
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))  # e.g. /opt/render/project/src
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))  # default ./data
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -177,29 +180,57 @@ def send_button_message(to, body, buttons):
     except RequestException as e:
         print("❌ Button send network error:", type(e).__name__, str(e))
 
-# ===== Tiny URL-Trigger Module (patched) =====
+# ===== Enhanced WhatsApp Poster with full logs =====
 def _post_whatsapp(payload):
+    """
+    Enhanced sender: sends payload to WhatsApp Graph API and logs everything clearly.
+    """
     if not ACCESS_TOKEN or not PHONE_ID:
         return {"ok": False, "error": "Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_ID in .env"}, 500
+
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
     url = graph_messages_url()
+
+    print("\n==================== WHATSAPP API CALL ====================")
+    print("📤 Sending Payload:", payload)
+    print("📍 Endpoint:", url)
+
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        status_code = resp.status_code
+
         try:
             data = resp.json()
         except Exception:
             data = {"raw": resp.text}
-        return {"ok": resp.status_code in (200, 201), "status": resp.status_code, "data": data}, resp.status_code
-    except RequestException as e:
-        return {
-            "ok": False,
-            "error": f"NetworkError: {type(e).__name__}",
-            "detail": str(e)
-        }, 502
 
+        print("📩 Response Code:", status_code)
+        print("📩 Response Data:", data)
+
+        # Success summary
+        if isinstance(data, dict) and "messages" in data:
+            for msg in data.get("messages", []):
+                print(f"✅ Message accepted by WhatsApp | ID: {msg.get('id')}")
+
+        # Error summary
+        if isinstance(data, dict) and "error" in data:
+            err = data["error"]
+            print(f"❌ Meta Error {err.get('code')}: {err.get('message')}")
+            details = err.get("error_data", {}).get("details")
+            if details:
+                print(f"   ➤ Details: {details}")
+
+        print("===========================================================\n")
+        return {"ok": status_code in (200, 201), "status": status_code, "data": data}, status_code
+
+    except RequestException as e:
+        print("❌ Network Error:", type(e).__name__, str(e))
+        return {"ok": False, "error": f"NetworkError: {type(e).__name__}", "detail": str(e)}, 502
+
+# ===== Tiny URL-Trigger Endpoints =====
 @app.get("/send-whatsapp")
 def send_whatsapp_url():
     """
@@ -210,7 +241,7 @@ def send_whatsapp_url():
     if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
         return {"ok": False, "error": "Unauthorized"}, 403
 
-    to = request.args.get("to", "").strip()
+    to = request.args.get("to", "").strip().replace("+", "")
     text = request.args.get("text", "").strip()
     if not to or not text:
         return {"ok": False, "error": "Missing 'to' or 'text' query param"}, 400
@@ -229,62 +260,66 @@ def send_whatsapp_url():
 @app.get("/send-template")
 def send_template_url():
     """
-    Generic template sender.
-
-    GET /send-template?api_key=...&to=91XXXXXXXXXX
-        &name=template_api_name
-        &lang=en
-        &policy=deterministic         (optional; default deterministic)
-        &header=1                     (optional; include empty header component)
-        &vars=a,b,c                   (body parameters in order)
-
-    Use outside 24h window (pre-approved template).
+    Universal WhatsApp template sender with detailed logs.
+    Example:
+      /send-template?api_key=WalkBack2025
+                    &to=919972835890
+                    &name=shipment_details
+                    &lang=en_US
+                    &vars=12524,300,KA09B1452,Raju Somu,9865252142
     """
     api_key = request.args.get("api_key")
     if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
         return {"ok": False, "error": "Unauthorized"}, 403
 
-    to = request.args.get("to", "").strip()
-    name = (request.args.get("name", "") or "").strip()
-    lang = (request.args.get("lang", "en") or "en").strip()
-    vars_csv = (request.args.get("vars", "") or "").strip()
-    policy = (request.args.get("policy", "deterministic") or "deterministic").strip()
-    include_header = (request.args.get("header", "0") or "0").strip().lower() in ("1", "true", "yes")
+    # Clean inputs
+    to = request.args.get("to", "").strip().replace("+", "")
+    name = request.args.get("name", "").strip()
+    lang = request.args.get("lang", "en_US").strip()
+    vars_csv = request.args.get("vars", "").strip()
+    policy = request.args.get("policy", "deterministic").strip()
 
     if not to or not name:
+        print("❌ Missing required query params: 'to' or 'name'")
         return {"ok": False, "error": "Missing 'to' or 'name' query param"}, 400
 
-    # Build body parameters from vars=
+    # Prepare parameters (BODY)
     parameters = []
     if vars_csv:
         for v in vars_csv.split(","):
-            v = (v or "").strip()
-            if v != "":
+            v = v.strip()
+            if v:
                 parameters.append({"type": "text", "text": v})
 
     components = []
-    if include_header:
-        components.append({"type": "header"})  # text header, no variables
     if parameters:
         components.append({"type": "body", "parameters": parameters})
-
-    lang_obj = {"code": lang}
-    if policy:
-        lang_obj["policy"] = policy
 
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "template",
         "template": {
-            "name": name,                 # exact API name
-            "language": lang_obj,         # e.g., {"code":"en","policy":"deterministic"}
+            "name": name,
+            "language": {"code": lang, "policy": policy},
             "components": components
         }
     }
-    print(f"➡️  Outbound payload (template): name='{name}', lang='{lang}', params={len(parameters)} ::", payload)
+
+    print("\n➡️ Outbound TEMPLATE MESSAGE")
+    print(f"   To: {to}")
+    print(f"   Template: {name}")
+    print(f"   Language: {lang}")
+    print(f"   Variables: {vars_csv if vars_csv else '(none)'}")
+
     res, code = _post_whatsapp(payload)
-    print("⬅️  Meta response (template):", res)
+
+    if res.get("ok"):
+        print(f"✅ TEMPLATE SENT SUCCESSFULLY | HTTP {code}")
+    else:
+        print(f"❌ TEMPLATE SEND FAILED | HTTP {code}")
+    print("-----------------------------------------------------------\n")
+
     return res, code
 
 # ---- Dedicated endpoint for your 'shipment_details' template ----
@@ -301,7 +336,7 @@ def send_shipment():
     if not BACKUP_TOKEN or api_key != BACKUP_TOKEN:
         return {"ok": False, "error": "Unauthorized"}, 403
 
-    to = (request.args.get("to", "") or "").strip()
+    to = (request.args.get("to", "") or "").strip().replace("+", "")
     order_id = (request.args.get("order_id", "") or "").strip()
     cases = (request.args.get("cases", "") or "").strip()
     vehicle = (request.args.get("vehicle", "") or "").strip()
@@ -325,7 +360,7 @@ def send_shipment():
         "type": "template",
         "template": {
             "name": "shipment_details",
-            "language": {"code": "en", "policy": "deterministic"},
+            "language": {"code": "en_US", "policy": "deterministic"},
             "components": [
                 {"type": "body", "parameters": parameters}
             ]
@@ -337,7 +372,7 @@ def send_shipment():
     return res, code
 # ------------------------------------------------------------------
 
-# ===== Webhook for incoming messages =====
+# ===== Webhook for incoming messages (and delivery/status logs) =====
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -351,7 +386,24 @@ def webhook():
 
         try:
             value = data['entry'][0]['changes'][0]['value']
+
+            # Delivery / read / failed statuses:
             if 'statuses' in value:
+                for st in value.get('statuses', []):
+                    mid = st.get('id')
+                    status = st.get('status')
+                    ts = st.get('timestamp')
+                    to = st.get('recipient_id')
+                    conv = st.get('conversation', {})
+                    origin = conv.get('origin', {}).get('type')
+                    pricing = st.get('pricing', {})
+                    print(f"📬 Status update | msg_id={mid} | to={to} | status={status} | ts={ts} | origin={origin} | pricing={pricing}")
+                    if 'errors' in st:
+                        for err in st['errors']:
+                            print(f"   ❌ Delivery error {err.get('code')} - {err.get('title')}: {err.get('message')}")
+                            details = err.get('error_data', {}).get('details')
+                            if details:
+                                print(f"      ➤ Details: {details}")
                 return "Status received", 200
 
             messages = value.get('messages', [])
