@@ -39,7 +39,7 @@ def register_admin_routes(app):
             password = request.form.get('password', '').strip()
             if username == 'Walkmate' and password == 'Exp@2025@walk':
                 session['user'] = username
-                return redirect(url_for('admin_panel'))
+                return redirect(url_for('admin'))
             return render_template('login.html', error="Invalid credentials")
         return render_template('login.html')
 
@@ -99,7 +99,7 @@ def register_admin_routes(app):
             """, (main_product, option, image_url, description, mrp, category))
             conn.commit()
             conn.close()
-            return redirect(url_for('admin_panel'))
+            return redirect(url_for('admin'))
         except Exception as e:
             print("❌ ERROR in /add:", e, flush=True)
             return "Internal Server Error", 500
@@ -113,7 +113,7 @@ def register_admin_routes(app):
         conn.execute("DELETE FROM products WHERE id = ?", (id,))
         conn.commit()
         conn.close()
-        return redirect(url_for('admin_panel'))
+        return redirect(url_for('admin'))
 
     # ---------- Export Excel ----------
     @app.route('/export_excel')
