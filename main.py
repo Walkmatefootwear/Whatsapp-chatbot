@@ -3,6 +3,8 @@ import os
 from flask import Flask
 from whatsapp_chatbot import handle_webhook
 from whatsapp_orders import register_order_routes
+from whatsapp_admin import register_admin_routes
+
 
 app = Flask(__name__)
 
