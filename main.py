@@ -6,6 +6,7 @@ from whatsapp_orders import register_order_routes
 from whatsapp_admin import register_admin_routes   # ✅ added import
 
 app = Flask(__name__)
+app.secret_key = "walkmate-secret-key"
 
 # ===============================
 # Register routes from other modules
