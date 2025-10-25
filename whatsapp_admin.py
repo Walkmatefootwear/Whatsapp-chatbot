@@ -26,6 +26,41 @@ cloudinary.config(
 
 BACKUP_TOKEN = os.getenv("BACKUP_TOKEN", "WalkBack2025")
 
+
+# ===== Database Initialization =====
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            main_product TEXT,
+            option TEXT,
+            image TEXT,
+            description TEXT,
+            mrp TEXT,
+            category TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_state (
+            user_id TEXT PRIMARY KEY,
+            state TEXT,
+            last_updated INTEGER
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS processed_messages (
+            id TEXT PRIMARY KEY
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+init_db()
+
+
 # -----------------------------------------------------------
 # Register routes to Flask app
 # -----------------------------------------------------------
