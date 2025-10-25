@@ -3,30 +3,43 @@ import os
 import sqlite3
 import time
 import requests
-from flask import request, Response
+from flask import request
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# ====== Environment Variables ======
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "Walkmate2025")
 
-# Database setup
+# ====== Database Setup (shared with admin panel) ======
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
-DB_PATH = os.path.join(DATA_DIR, "products.db")
+DB_PATH = os.getenv("DB_PATH", os.path.join(DATA_DIR, "products.db"))
+
 
 def graph_messages_url():
     return f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
 
 
-# ===== Database Initialization =====
+# ====== Database Initialization ======
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            main_product TEXT,
+            option TEXT,
+            image TEXT,
+            description TEXT,
+            mrp TEXT,
+            category TEXT
+        )
+    """)
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_state (
             user_id TEXT PRIMARY KEY,
@@ -42,17 +55,16 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 init_db()
 
-
-# ===== State Management =====
+# ====== User State Management ======
 def get_user_state(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT state, last_updated FROM user_state WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-
     if result:
         state, last_updated = result
         # Reset if last update older than 10 minutes
@@ -67,8 +79,7 @@ def set_user_state(user_id, state):
     now = int(time.time())
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)",
-              (user_id, state, now))
+    c.execute("REPLACE INTO user_state (user_id, state, last_updated) VALUES (?, ?, ?)", (user_id, state, now))
     conn.commit()
     conn.close()
 
@@ -81,7 +92,7 @@ def clear_user_state(user_id):
     conn.close()
 
 
-# ===== Deduplication =====
+# ====== Message Deduplication ======
 def is_duplicate_message(msg_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -99,21 +110,13 @@ def mark_message_processed(msg_id):
     conn.close()
 
 
-# ===== WhatsApp Send Functions =====
+# ====== WhatsApp Message Sending ======
 def send_text(to, message):
     url = graph_messages_url()
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": message}
-    }
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    payload = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": message}}
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=15)
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
         print("📨 Text sent:", res.status_code, res.text, flush=True)
     except Exception as e:
         print("❌ Text send failed:", e, flush=True)
@@ -121,18 +124,15 @@ def send_text(to, message):
 
 def send_image(to, image_url, caption=""):
     url = graph_messages_url()
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "image",
-        "image": {"link": image_url, "caption": caption}
+        "image": {"link": image_url, "caption": caption},
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=15)
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
         print("🖼️ Image sent:", res.status_code, res.text, flush=True)
     except Exception as e:
         print("❌ Image send failed:", e, flush=True)
@@ -140,22 +140,15 @@ def send_image(to, image_url, caption=""):
 
 def send_button_message(to, body, buttons):
     url = graph_messages_url()
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": body},
-            "action": {"buttons": buttons}
-        }
+        "interactive": {"type": "button", "body": {"text": body}, "action": {"buttons": buttons}},
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=15)
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
         print("🔘 Button message sent:", res.status_code, res.text, flush=True)
     except Exception as e:
         print("❌ Button send failed:", e, flush=True)
@@ -165,7 +158,7 @@ def send_button_message(to, body, buttons):
 def handle_webhook(app):
     @app.route("/webhook", methods=["GET", "POST"])
     def webhook():
-        # Webhook verification
+        # --- Verification Step ---
         if request.method == "GET":
             token = request.args.get("hub.verify_token")
             challenge = request.args.get("hub.challenge")
@@ -174,7 +167,7 @@ def handle_webhook(app):
                 return challenge, 200
             return "Invalid token", 403
 
-        # Webhook POST (message updates)
+        # --- Incoming Message Processing ---
         try:
             data = request.get_json(force=True)
             print("📩 Webhook received:", data, flush=True)
@@ -183,11 +176,11 @@ def handle_webhook(app):
             changes = entry.get("changes", [{}])[0]
             value = changes.get("value", {})
 
-            # Message statuses (delivery/read)
+            # Handle status callbacks
             if "statuses" in value:
                 for s in value["statuses"]:
                     print(f"📬 Status Update: {s.get('status')} | ID: {s.get('id')}", flush=True)
-                return "OK", 200
+                return "Status OK", 200
 
             messages = value.get("messages", [])
             if not messages:
@@ -198,13 +191,13 @@ def handle_webhook(app):
             from_no = msg.get("from")
             msg_type = msg.get("type")
 
-            # Prevent duplicates
+            # Avoid duplicates
             if is_duplicate_message(msg_id):
-                print("⚠️ Duplicate message ignored:", msg_id, flush=True)
+                print(f"⚠️ Duplicate message {msg_id} ignored", flush=True)
                 return "Duplicate", 200
             mark_message_processed(msg_id)
 
-            # Extract user message text
+            # Extract text input
             user_input = ""
             if msg_type == "text":
                 user_input = msg["text"].get("body", "").strip().lower()
@@ -215,7 +208,7 @@ def handle_webhook(app):
                 elif inter.get("type") == "list_reply":
                     user_input = inter["list_reply"]["title"].strip().lower()
 
-            # --- Core conversation logic ---
+            # --- Main Chat Logic ---
             state = get_user_state(from_no)
             print(f"👤 {from_no} | Input: {user_input} | State: {state}", flush=True)
 
@@ -224,27 +217,27 @@ def handle_webhook(app):
                 send_button_message(
                     from_no,
                     "Hi 👋, welcome to Walkmate!\nPlease reply with '2' to get product images.",
-                    [{"type": "reply", "reply": {"id": "option_2", "title": "2"}}]
+                    [{"type": "reply", "reply": {"id": "option_2", "title": "2"}}],
                 )
                 set_user_state(from_no, "awaiting_option")
                 return "Greeting sent", 200
 
-            # Step 2: Option selected
+            # Step 2: User chooses option 2
             if user_input == "2" and state == "awaiting_option":
                 send_text(from_no, "Please enter the article number (e.g., 2205)")
                 set_user_state(from_no, "awaiting_article")
                 return "Asked for article", 200
 
-            # Step 3: Article lookup
+            # Step 3: Fetch product by article number
             if state == "awaiting_article":
                 if user_input == "1":
                     send_button_message(
                         from_no,
                         "Hi 👋, welcome to Walkmate!\nPlease reply with '2' to get product images.",
-                        [{"type": "reply", "reply": {"id": "option_2", "title": "2"}}]
+                        [{"type": "reply", "reply": {"id": "option_2", "title": "2"}}],
                     )
                     set_user_state(from_no, "awaiting_option")
-                    return "Returned to main", 200
+                    return "Returned to menu", 200
 
                 article = user_input
                 conn = sqlite3.connect(DB_PATH)
@@ -261,12 +254,12 @@ def handle_webhook(app):
                     send_button_message(
                         from_no,
                         "✅ Reply with 1 to go back to the main menu or enter another article number to view another product.",
-                        [{"type": "reply", "reply": {"id": "go_main", "title": "1"}}]
+                        [{"type": "reply", "reply": {"id": "go_main", "title": "1"}}],
                     )
                     set_user_state(from_no, "awaiting_article")
                 return "Products sent", 200
 
-            # Step 4: Fallback
+            # Step 4: Default fallback
             send_text(from_no, "Please type 'hi' to start again.")
             return "Fallback", 200
 
