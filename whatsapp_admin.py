@@ -51,7 +51,7 @@ def register_admin_routes(app):
 
     # ---------- Admin dashboard ----------
     @app.route('/admin')
-    def admin_panel():
+    def admin():
         if 'user' not in session:
             return redirect(url_for('login'))
 
