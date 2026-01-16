@@ -1,23 +1,39 @@
-@app.route("/download-db-zip")
-def download_db_zip():
-    import zipfile
-    from io import BytesIO
+def register_admin_routes(app):
 
-    token = request.args.get("token")
-    if token != BACKUP_TOKEN:
-        return "Unauthorized", 403
+    ...
+    # ---------- Download DB ----------
+    @app.route('/download-db')
+    def download_db():
+        token = request.args.get('token')
+        if token != BACKUP_TOKEN:
+            return "Unauthorized", 403
 
-    if not os.path.exists(DB_PATH):
+        if os.path.exists(DB_PATH):
+            return send_file(DB_PATH, as_attachment=True)
         return "Database not found", 404
 
-    mem = BytesIO()
-    with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(DB_PATH, arcname="products.db")
 
-    mem.seek(0)
-    return send_file(
-        mem,
-        as_attachment=True,
-        download_name="products_db_backup.zip",
-        mimetype="application/zip"
-    )
+    # ---------- TEMP DB ZIP DOWNLOAD ----------
+    @app.route("/download-db-zip")
+    def download_db_zip():
+        import zipfile
+        from io import BytesIO
+
+        token = request.args.get("token")
+        if token != BACKUP_TOKEN:
+            return "Unauthorized", 403
+
+        if not os.path.exists(DB_PATH):
+            return "Database not found", 404
+
+        mem = BytesIO()
+        with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(DB_PATH, arcname="products.db")
+
+        mem.seek(0)
+        return send_file(
+            mem,
+            as_attachment=True,
+            download_name="products_db_backup.zip",
+            mimetype="application/zip"
+        )
